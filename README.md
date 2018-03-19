@@ -4,6 +4,7 @@
 1. [Chapter 1: Meet Kafka](#Chapter1)
 2. [Chapter 2: Installing Kafka](#Chapter2)
 3. [Chapter 3: Kafka Producers: Writing Messages to Kafka](#Chapter3)
+4. [Chapter 4: Kafka Consumers: Reading Data from Kafka](#Chapter4)
 
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
@@ -119,3 +120,151 @@ export KAFKA_JVM_PERFORMANCE_OPTS="-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20 
 Kafka utilizes Zookeeper for storing metadata information about the brokers, topics, and partitions. Writes to Zookeeper are only performed on changes to the member‐ ship of consumer groups or on changes to the Kafka cluster itself (does not justify a dedicated zookeeper ensemble). Consumers have a configurable choice to use either Zookeeper or Kafka for committing offsets. These commits can be a significant amount of Zookeeper traffic, especially in a cluster with many consumers, and will need to be taken into account.
 
 ## Chapter 3: Kafka Producers: Writing Messages to Kafka<a name="Chapter3"></a>
+### Producer Overview
+We start producing messages to Kafka by creating a _ProducerRecord_, which must include the topic we want to send the record to and a value (key and/or partition information is optional). The message would then be serialized as a byte array and sent to a partitioner (if the partition is specified in the message the partitioner does nothing). Once the producer knows which topic and partition the record will go to, it then adds the record to a batch of records that will also be sent to the same topic and partition. A separate thread is responsible for sending those batches of records to the appropriate Kafka brokers. The broker sends back a _RecordMetadata_ it the operation was successful containing the topic, partition, and the offset of the record within the partition or an error if the operation failed (in this case the Producer might attempt to retry the message delivery).
+
+### Constructing a Kafka Producer
+A Kafka producer has three mandatory properties:
+
+    * bootstrap.servers: List of host:port pairs of brokers that the producer will use to establish initial connection to the Kafka cluster
+    * key.serializer: Name of a class that will be used to serialize the keys of the records we will produce to Kafka. Kafka brokers expect byte arrays as keys and values of messages. 'key.serializer' should be set to a name of a class that implements the 'org.apache.kafka.common.serialization.Serializer' interface. Setting 'key.serializer' is required even if you intend to send only values.
+    * value.serializer: Name of a class that will be used to serialize the values of the records we will produce to Kafka
+    
+There is three primary methods of sending messages:
+
+    * Fire-and-forget: We send a message to the server and don’t really care if it arrives succesfully or not.
+    * Synchronous send: We send a message, the send() method returns a Future object, and we use get() to wait on the future and see if the send() was successful or not
+    * Asynchronous send: We call the send() method with a callback function, which gets triggered when it receives a response from the Kafka broker
+     
+### Sending a Message to Kafka
+Example of Producer creationg and message sending:
+
+```java
+//Example of creating a producer and sending a message
+private Properties kafkaProps = new Properties();
+kafkaProps.put("bootstrap.servers", "broker1:9092,broker2:9092");
+kafkaProps.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
+kafkaProps.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
+KafkaProducer producer = new KafkaProducer<String, String>(kafkaProps);
+ProducerRecord<String, String> record = new ProducerRecord<>("CustomerCountry", "Precision Products", "France"); //Topic-key-value constructor
+
+try {
+      producer.send(record);
+} catch (Exception e) {
+            e.printStackTrace();
+}
+```
+
+#### Sending a Message Synchronously
+To send a message synchronoulsy, we just have to replace the previous `producer.send(record);` by ` producer.send(record).get();`.
+KafkaProducer has two types of errors:
+
+    * Retriable errors: Are those that can be resolved by sending the message again (i.e. connection failure), the KafkaProducer can be configured to retry those errors automatically.
+    * Non retriable errors: For example 'message too large'.
+    
+#### Sending a Message Asynchronously
+A callback needs to be implemented to send the message asynchronously:
+
+```java
+ private class DemoProducerCallback implements org.apache.kafka.clients.producer.Callback {
+    @Override public void onCompletion(RecordMetadata recordMetadata, Exception e) {
+     if (e != null) {
+         e.printStackTrace();
+        }
+    }
+}
+producer.send(record, new DemoProducerCallback());
+```
+
+#### Configuring Producers
+Some parameters that can have a significant impact on memory use, performance, and reliability of the producers:
+
+    * acks: Controls how many partition replicas must receive the record before the producer can consider the write successful
+        - ack=0: The producer assumes the sending was successful straight away (for hight throughput)
+        - ack=1: The producer waits for the partition leader to reply, messages can be lost if the leader crashes unexpectedly. Throughput depends on the way to send the messages (synchronous or asynchronous)
+        - ack=all: the producer will receive a success response from the broker once all in-sync replicas received the message
+    * buffer.memory: Sets the amount of memory the producer will use to buffer messages waiting to be sent to brokers
+    * compression.type: By default messages are uncompressed, this parameter can be set to snappy, gzip, or lz4
+    * retries:  How many times the producer will retry sending the message before giving up and notifying the client of an issue
+    * retry.backoff.ms: milliseconds to wait after a failed attempt of message send (defaults 100ms)
+    * batch.size: Messages to the same partition are batched together, this parameter controls the amount of bytes used for each batch
+    * linger.ms: Controls the amount of time to wait for additional messages before send‐ ing the current batch (a batch is send either when the buffer is full, or when the linger period is reached). By default, the producer will send messages as soon as there is a sender thread available to send them, even if there’s just one message in the batch.
+    * client.id: Producer identifier, can be any string
+    * max.in.flight.requests.per.connection: Controls how many messages the producer will send to the server without receiving responses
+    * timeout.ms, request.timeout.ms, and metadata.fetch.timeout.ms: control how long the producer will wait for a reply from the server when sending data (request.timeout.ms) and when requesting metadata (metadata.fetch.timeout.ms) or the time the broker will wait for in-sync replicas to acknowledge the message in order to meet the acks configuration (timeout.ms).
+    * max.block.ms: How long the producer will block when calling send() and when explicitly requesting metadata via partitionsFor()
+    * max.request.size: Size of a produce request sent by the producer. It caps both the size of the largest message that can be sent and the number of messages that the producer can send in one request.
+    * receive.buffer.bytes and send.bu er.bytes: Sizes of the TCP send and receive buffers used by the sockets when writing and reading data (-1 for using the OS defaults)
+    
+### Serializers
+#### Custom Serializers 
+Example of custom serializer for a java bean _Customer(customerId, customerName)_:
+
+```java
+import org.apache.kafka.common.errors.SerializationException;
+import java.nio.ByteBuffer;
+import java.util.Map;
+
+public class CustomerSerializer implements Serializer<Customer> {
+        @Override
+  public void configure(Map configs, boolean isKey) {
+   // nothing to configure
+  }
+  /**
+  * We are serializing Customer as: 4 byte int representing customerId 4 byte int representing length of 
+  * customerName in UTF-8 bytes (0 if name is Null) N bytes representing customerName in UTF-8
+  */
+  @Override
+  public byte[] serialize(String topic, Customer data) {
+    try {
+        byte[] serializedName;
+        int stringSize;
+        if (data == null) return null;
+        else if (data.getName() != null) {
+                serializeName = data.getName().getBytes("UTF-8");
+                stringSize = serializedName.length;
+        } else {
+            serializedName = new byte[0];
+            stringSize = 0;
+        }
+        ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + stringSize);
+        buffer.putInt(data.getID());
+        buffer.putInt(stringSize);
+        buffer.put(serializedName);
+        return buffer.array();
+    } catch (Exception e) {
+        throw new SerializationException("Error when serializing Customer to byte[] " + e);
+    } 
+  }
+  
+  @Override
+  public void close() {
+    // nothing to close
+  }
+}
+```
+
+It is clear that the code is fragile and difficult to maintain (imagine supporting backwards compatibility if we add a new field)
+
+#### Serializing Using Apache Avro
+Apache Avro is a language-neutral data serialization format, Avro data is described in a language-independent schema (usually JSON), Avro assumes that the schema is present when reading and writing files, usually by embedding the schema in the files themselves. Two rules have to be considered:
+
+    * The schema used for writing the data and the schema expected by the reading application must be compatible. The Avro documentation includes compatibility rules
+    * The deserializer will need access to the schema that was used when writing the data, even when it is different than the schema expected by the application that accesses the data. In Avro files, the writing schema is included in the file itself, but there is a better way to handle this for Kafka messages
+    
+Avro requires the entire schema to be present when reading the record, in kafka this is achieved with a common architecture pattern and use a Schema Registry: The schema is stored somewhere else and only the identifier is stored with each record. The key is that all this work — storing the schema in the registry and pulling it up when required — is done in the serializers and deserializers. To use the avro serializer, set the value of the 'key.serializer' or 'value.serializer' to 'io.confluent.kafka.serializers.KafkaAvroSerializer' and set the value of 'schema.registry.url' to the appropriate registry system.
+You can also pass the Avro schema explicitly by creating the schema string and parsing it with `Schema schema = new Schema.Parser().parse(schemaString);`, then setting the message type in the producer to be a _GenericRecord_, and adding each individual fields on the genering record like this:
+
+```java
+GenericRecord customer = new GenericData.Record(schema);
+customer.put("customerId", "1");
+customer.put("customerName", "John Doe");
+```
+
+### Partitions
+Keys in messages serves two goals: they are additional information that gets stored with the message, and they are also used to decide which one of the topic partitions the message will be written to (message with the same key goes to the same partition). When the key is null and the default partitioner is used, the record will be sent to one of the available partitions of the topic at random (round robin). If the key exists, and the default partitioner is used, then the key is hashed to get the partition. The mapping of keys to partitions is consistent only as long as the number of partitions in a topic does not change.
+As with the Serializer, a custom Partitioner can be implemented by extending the _org.apache.kafka.clients.producer.Partitioner_ interface.
+
+## Chapter 4: Kafka Consumers: Reading Data from Kafka<a name="Chapter4"></a>
+### Kafka Consumer Concepts
+#### Consumers and Consumer Groups
