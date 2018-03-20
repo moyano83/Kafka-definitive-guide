@@ -6,7 +6,7 @@
 3. [Chapter 3: Kafka Producers: Writing Messages to Kafka](#Chapter3)
 4. [Chapter 4: Kafka Consumers: Reading Data from Kafka](#Chapter4)
 5. [Chapter 5: Kafka Internals](#Chapter5)
-
+6. [Chapter 6: Reliable Data Delivery](#Chapter6)
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
 Publish/subscribe messaging is a pattern that is characterized by the sender (publisher) of a piece of data (message) not specifically directing it to a receiver. Instead, the publisher classifies the message somehow, and that receiver (subscriber) subscribes to receive certain classes of messages.
@@ -420,6 +420,7 @@ In case you want to have a single consumer that always needs to read data from a
 ```java
 List<PartitionInfo> partitionInfos = consumer.partitionsFor("topic");
 for (PartitionInfo partition : partitionInfos) partitions.add(new TopicPartition(partition.topic(), partition.partition()));
+
 //Assign the partitions directly, but if someone adds new partitions to the topic, the consumer will not be notified
 consumer.assign(partitions);
 ```
@@ -431,3 +432,84 @@ Apache Kafka still has two older clients written in Scala that are part of the k
     * ZookeeperConsumerConnector: Similar to the current consumer, it has consumer groups and it rebalances partitions but uses Zookeeper to manage consumer groups
     
 ## Chapter 5: Kafka Internals<a name="Chapter5"></a> 
+### Cluster Membership
+Kafka uses Apache Zookeeper to maintain the list of brokers that are currently members of a cluster. Every time a broker process starts, it registers itself with its ID in Zookeeper by creating an ephemeral node, which would be removed if a broker loses connectivity to zookeeper (other kafka components would be notified in this case). The broker ID will still exists in other data structures so if another broker join the cluster with the same ID, it gets the same partitions and topics assigned to it.
+
+### The Controller
+The controller is one of the Kafka brokers that is responsible for electing partition leaders, the first broker that starts in the cluster becomes the controller by creating an ephemeral node in ZooKeeper called '/controller'. The brokers create a Zookeeper watch on the controller node so they get notified of changes to this node. When the controller loses connectivity, the ephemeral node is removed and the brokers notified. The brokers will then try to create the Controller (only one will succeed, the rest will get a "node already exists" exception). Each time a controller is elected, it receives a new, higher controller epoch number through a Zookeeper conditional increment operation. Messages from a controller with an older number, will be ignored.
+
+### Replication
+In kafka, replicas are stored on brokers, and each broker typically stores hundreds or even thousands of replicas belonging to different topics and partitions. Types:
+
+    * Leader replica: Each partition has a single replica designated as the leader. All produce/consume requests go through the leader, to guarantee consistency
+    * Follower replica: Followers don’t serve client requests, they replicate messages from the leader and stay up-to-date with the newer messages the leader has
+
+The leader has to know which of the follower replicas is up-to-date with the leader. To stay in sync with the leader, the replicas send the leader Fetch requests, the exact same type of requests that consumers send in order to consume messages (the messages are sent as response to this requests). If a replica hasn’t requested a message in more than 10 seconds (configurable through 'replica.lag.time.max.ms) or if it has requested messages but hasn’t caught up to the most recent mes‐ sage in more than 10 seconds, the replica is considered out of sync and can't be elected leader in case of failure. A preferred leader is the replica that was the leader when the topic was originally created, if 'auto.leader.rebalance.enable=true' if the preferred leader replica is not the current leader but is in-sync, a leader election will be triggered to make the preferred leader the current leader.
+
+### Request Processing
+Kafka has a binary protocol that specifies the format of the requests and how brokers respond to them, all requests sent to the broker from a specific client will be processed in the order in which they were received. All requests have a standard header that includes:
+
+    * Request type (also called API key)
+    * Request version (so the brokers can handle clients of different versions and respond accordingly)
+    * Correlation ID: a number that uniquely identifies the request and also appears in the response and in the error logs (the ID is used for troubleshooting)
+    * Client ID: used to identify the application that sent the request
+    
+For each port the broker listens on, the broker runs an acceptor thread that creates a connection and hands it over to a processor thread (also called network threads)for handling. The network threads are responsible for taking requests from client connections, placing them in a request queue, and picking up responses from a response queue and sending them back to clients.Once requests are placed on the request queue, IO threads are responsible for picking them up and processing them. The most common types of requests are:
+    
+    * Produce requests: Sent by producers and contain messages the clients write to Kafka brokers
+    * Fetch requests: Sent by consumers and follower replicas when they read messages from Kafka brokers
+
+Both produce requests and fetch requests have to be sent to the leader replica of a partition, which clients discovered through _metadata requests_, which includes a list of topics the client is interested in. Clients typically cache this information by sending another metadata request so they know if the topic metadata changed.
+
+#### Produce Requests
+When the broker that contains the lead replica for a partition receives a produce request for this partition, it will run a few validations:
+    
+    * Does the user sending the data have write privileges on the topic?
+    * Is the number of acks specified in the request valid (only 0, 1, and “all” are allowed)?
+    * If acks is set to all, are there enough in-sync replicas for safely writing the message? (Brokers can be configured to refuse new messages if the number of in-sync replicas falls below a configurable number)
+
+If all the above passes it will write the message to local disk. Once the message is written to the leader of the partition, the broker examines the acks configuration (if 0 or 1, the broker will respond immediately, if 'all', the request will be stored in a buffer called purgatory until the leader observes that the follower replicas replicated the message, at which point a response is sent to the client)
+
+#### Fetch Requests
+The client sends a request, asking the broker to send messages from a list of topics, partitions, and offsets. Clients specify a limit to how much data the broker can return for each partition and allocate memory to handle the response. The broker would read the message for the partition after validating the request up to the limit specified by the client (clients can also set a lower boundary for the data size to receive). Not all the data that exists on the leader of the parti‐ tion is available for clients to read as messages not replicated to enough replicas yet are considered “unsafe”
+
+#### Other Requests
+The same binary protocol explaned before is used to communicate between the Kafka brokers themselves (i.e. when the controller announces that a partition has a new leader, it sends a _LeaderAndIsr_ request to the new leader and followers). This includes calls for different clients (the _ApiVersionRequest_ allows clients to ask the broker which versions of each request is supported), different versions of the current requests, etc... 
+
+### Physical Storage
+The basic storage unit of Kafka is a partition replica, which cannot be split so the size of a partition is limited by the space available on a single mount point.  
+
+#### Partition Allocation
+When kafka allocates partitions, it does so by taking in consideration:
+
+    * To spread replicas evenly among brokers
+    * To make sure that for each partition, each replica is on a different broker
+    * If the brokers have rack information (from version 0.10.0 and higher), then assign the replicas for each partition to different racks if possible
+    
+To decide in which directory new partitions are stored, we count the number of partitions on each directory and add the new partition to the directory with the fewest partitions. This means that if you add a new disk, all the new partitions will be created on that disk.
+
+#### File Management
+Partitions are splitted in segments so it is easier to apply retention policies. The current segment is called _active segment_ and is never deleted. A Kafka broker will keep an open file handle to every segment in every partition, even inactive segments.
+
+#### File Format
+Each segment is stored in a single data file. Inside the file, we store Kafka messages and their offsets. The format of the data on the disk is identical to the format of the messages that we send from the producer to the broker and later from the broker to the consumers. Each message contains—in addition to its key, value, and offset—things like the message size, checksum code that allows us to detect corruption, magic byte that indicates the version of the message format, compression codec (Snappy, GZip, or LZ4), and a timestamp (from v 0.10.0).
+Kafka brokers ship with the DumpLogSegment tool, which allows you to check the offset, checksum, magic byte, size, and compression codec for each message. You can run the tool using: `bin/kafka-run-class.sh kafka.tools.DumpLogSegments`.
+
+#### Indexes
+In order to help brokers quickly locate the message for a given offset, Kafka maintains an index for each partition (broken in segments as well). 
+
+#### Compaction
+Kafka supports retention policy in a topic to be of type _delete_ which deletes events older than the retention time and _compact_ which stores the most recent value for each key in the topic (only for non null keys). Each log is viewed as split into two portions:
+
+    * Clean: This section contains only one value for each key, which is the latest value at the time of the previous compaction
+    * Dirty: Messages that were written after the last compaction.
+
+If compaction is enabled when Kafka starts (by _log.cleaner.enabled_ configuration), each broker will start a compaction manager thread and _n_ compaction threads.
+
+#### Deleted Events
+In order to delete a key from the system completely, not even saving the last message, the application must produce a message that contains that key and a null value (called tombstone) which would be around for a configurable amount of time. During this time, consum‐ ers will be able to see this message and know that the value is deleted.
+
+#### When Are Topics Compacted?
+The compact policy never compacts the current segment. In version 0.10.0 and older, Kafka will start compacting when 50% of the topic contains dirty records. In future versions, the plan is to add a grace period during which we guarantee that messages will remain uncompacted.
+
+## Chapter 6: Reliable Data Delivery<a name="Chapter6"></a>
