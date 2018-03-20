@@ -5,6 +5,7 @@
 2. [Chapter 2: Installing Kafka](#Chapter2)
 3. [Chapter 3: Kafka Producers: Writing Messages to Kafka](#Chapter3)
 4. [Chapter 4: Kafka Consumers: Reading Data from Kafka](#Chapter4)
+5. [Chapter 5: Kafka Internals](#Chapter5)
 
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
@@ -268,3 +269,165 @@ As with the Serializer, a custom Partitioner can be implemented by extending the
 ## Chapter 4: Kafka Consumers: Reading Data from Kafka<a name="Chapter4"></a>
 ### Kafka Consumer Concepts
 #### Consumers and Consumer Groups
+Kafka consumers are typically part of a consumer group. When multiple consumers are subscribed to a topic and belong to the same consumer group, each consumer in the group will receive messages from a different subset of the partitions in the topic. If we add more consumers to a single group with a single topic than we have partitions, some of the consumers will be idle and get no messages at all. Kafka topic is scaled by adding more consumers to a consumer group (but the number of partitions determines the consumption rate). To make sure an application gets all the messages in a topic (for example multiple applications consuming the same topic), ensure the application has its own consumer group, what a consumer group does with the messages doesn't affect the other consumer groups.
+
+#### Consumer Groups and Partition Rebalance
+Reassignment of partitions to consumers happens when a consumer is added to the group, a consumer leaves the group or the topics the consumer group is consuming are modified (i.e. new partitions are added). Moving partition ownership from one consumer to another is called a rebalance. During a rebalance, consumers can't consume messages, so a rebalance is basically a short window of unavail‐ ability of the entire consumer group. Consumers maintain membership in a consumer group and ownership of the partitions assigned to them is by sending heartbeats to a Kafka broker designated as the group coordinator.
+
+### Creating a Kafka Consumer
+Similar to creating a producer, you pass a list of properties to the constructor of consumer with the three mandatory configurations: _bootstrap.servers_, _key.deserializer_, and _value.deserializer_ (and optionally _group.id_):
+
+```java
+Properties props = new Properties();
+props.put("bootstrap.servers", "broker1:9092,broker2:9092");
+props.put("group.id", "CountryCounter");
+props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
+KafkaConsumer<String, String> consumer = new KafkaConsumer<String, String>(props);
+```
+
+To subscribe the previous consumer to a topic, we do `consumer.subscribe(Collections.singletonList("topicName"))`, although is possible to subscribe to topics based on a regular expression like in `consumer.subscribe("test.*")`, this is commonly used in applications that replicate data between Kafka and another system.
+
+### The Poll Loop
+A pool loop is used to consume messages from the server, once the consumer subscribe to topics, the poll loop handles all details of coordination, partition rebalances, heartbeats, and data fetching. We must consider the rule of one consumer per thread.
+
+```java
+try {
+    while (true) {
+//consumers must keep polling Kafka or they will be considered dead, the parameter is a timeout interval which specifies how long poll will block
+//if data is not available in the consumer buffer
+        ConsumerRecords<String, String> records = consumer.poll(100);
+        for (ConsumerRecord<String, String> r : records){
+            log.debug("topic = %s, partition = %s, offset = %d,customer = %s, country = %s\n", r.topic(), r.partition(), r.offset(),r.key(), r.value());
+        }
+    }
+} finally {
+    consumer.close(); //Closes the network connections and sockets and triggers a rebalance immediately
+}
+```
+
+### Configuring Consumers
+Other important consumer configuration parameters:
+
+    * fetch.min.bytes: Specifies the minimum amount of data that it wants to receive from the broker when fetching records. If a broker receives a request for records from a consumer but the new records amount to fewer bytes than min.fetch.bytes
+    * fetch.max.wait.ms: Configures Kafka to wait until it has enough data to send before responding to the consumer (defaults 500ms)
+    * max.partition.fetch.bytes: Controls the maximum number of bytes the server will return per partition (defaults to 1MB), it must be larger than the largest message a broker will accept
+    * session.timeout.ms: The amount of time a consumer can be out of contact with the brokers while still considered alive (defaults 3s)
+    * auto.offset.reset: Controls the behavior of the consumer when it starts reading a partition for which it doesn’t have a committed offset or if the committed offset it has is invalid. The default is 'latest' but can be set to 'earliest' too
+    * enable.auto.commit: Defaults to true, you might also want to control how frequently offsets will be committed using auto.commit.interval.ms
+    * partition.assignment.strategy: There is two strategies (defaults to org.apache.kafka.clients.consumer.RangeAssignor):
+        - Range: Assigns to each consumer a consecutive subset of partitions from each topic it subscribes to
+        - Round RobinTakes all the partitions from all subscribed topics and assigns them to consumers sequentially, one by one
+    * client.id: Can be any string. Used in logging and metrics and for quotas
+    * max.poll.records: Controls the maximum number of records that a single call to poll() will return
+    * receive.buffer.bytes and send.buffer.bytes: Sizes of the TCP send and receive buffers used by the sockets when writing and reading data
+    
+### Commits and Offsets
+Kafka allows consumers to use Kafka to track their position (offset) in each partition. The action of updating the current position in the partition is called a commit. A commit happens when a consumer produces a message to kafka to '__consumer_offsets' topic with the committed offset for each partition. if a consumer crashes or a new consumer joins the consumer group, this will trigger a rebalance. After a rebalance, each consumer may be assigned a new set of partitions than the one it processed before. In order to know where to pick up the work, the consumer will read the latest committed offset of each partition and continue from there.
+
+#### Automatic Commit
+If 'enable.auto.commit=true', then every five seconds (controlled by 'auto.commit.interval.ms') the consumer will commit the largest offset your client received. With autocommit enabled, a call to poll will always commit the last offset returned by the previous poll, which might lead to duplicate messages.
+
+#### Commit Current Offset
+The simplest and most reliable of the commit APIs is `consumer.commitSync()` which commits the lates offset returnet by poll and returns once the offset is committed (might throw a _CommitFailedException_).
+
+#### Asynchronous Commit
+The asynchronous commit `consumer.commitAsync()` does not block the consumer until the broker replies to a commit, it just keeps going on, but it will not retry the commit if it fails. This methods also gives you an option to pass in a callback that will be triggered when the broker responds (by passing a _OffsetCommitCallback_ object).
+
+#### Combining Synchronous and Asynchronous Commits
+A common pattern is to combine commitAsync() with commitSync() just before shutdown to make sure the last offset is committed before a shutdown or a rebalance.
+
+#### Commit Specified Offset
+In case you want to commit the offset in the middle of a big batch processing, you can do it explicitely by calling commitSync() and commitAsync() and pass a map of partitions and offsets that you wish to commit:
+
+```java
+private Map<TopicPartition, OffsetAndMetadata> currentOffsets = new HashMap<>();
+...
+currentOffsets.put(new TopicPartition(record.topic(),record.partition()), new OffsetAndMetadata(record.offset()+1, "no metadata"));
+...
+consumer.commitAsync(currentOffsets, null); // or commitSync
+```
+
+### Rebalance Listeners
+If your consumer maintained a buffer with events that it only processes occasionally, you will want to process the events you accumulated before losing ownership of the partition (or close file handles, database connections...). You can pass a _ConsumerRebalanceListener_ when 
+calling the _subscribe()_ method, which has two methods:
+
+    * 'public void onPartitionsRevoked(Collection<TopicPartition> partitions)': Called before rebalancing starts and after the consumer stopped consuming messages
+    * 'public void onPartitionsAssigned(Collection<TopicPartition> partitions)': Called after partitions have been reassigned to the broker, but before the con‐ sumer starts consuming messages
+    
+### Consuming Records with Specific Offsets
+So start reading all messages from the beginning of the partition, use `consumer.seekToBeginning(TopicPartition tp)` to skip all the way to the end of the partition use `consumer.seekToEnd(TopicPartition tp)`, but to seek a specific offset use `consumer.seek(TopicPartition tp, Integer Offset)`. This is likely done in the previously described `onPartitionsAssigned` method of a _ConsumerRebalanceListener_ instance (for example getting the offset from a database instead of Kafka).
+
+### But How Do We Exit?
+When you decide to exit the poll loop, you will need another thread to call _consumer.wakeup()_ If you are running the consumer loop in the main thread, this can be done from ShutdownHook, calling wakeup will cause poll() to exit with _WakeupException_. The _WakeupException_ doesn't need to be handled, but before exiting the thread, you must call `consumer.close()`.
+```java
+// This code is meant to be executed in the main application thread
+Runtime.getRuntime().addShutdownHook(new Thread() {
+    public void run() {
+        System.out.println("Starting exit...");
+        consumer.wakeup();
+        try {
+            mainThread.join();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    } 
+});
+```
+
+### Deserializers
+Kafka consumers require deserializers to convert byte arrays recieved from Kafka into Java objects, the AvroSerializer can make sure that all the data written to a specific topic is compatible with the schema of the topic.
+
+#### Custom deserializers
+Example of custom deserializer for a java bean _Customer(customerId, customerName)_:
+
+```java
+import org.apache.kafka.common.errors.SerializationException;
+import java.nio.ByteBuffer;
+import java.util.Map;
+
+public class CustomerDeserializer implements Deserializer<Customer> {
+    @Override public void configure(Map configs, boolean isKey) {// nothing to configure}
+      
+    @Override public Customer deserialize(String topic, byte[] data) {
+        try {
+            if (data == null) return null;
+            if (data.length < 8) throw new SerializationException("Size of data received by IntegerDeserializer is shorter than expected");
+            
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            int id = buffer.getInt();
+            int nameSize = buffer.getInt();
+            byte[] nameBytes = new Array[Byte](nameSize);
+            buffer.get(nameBytes);
+            return new Customer(id, new String(nameBytes, 'UTF-8'));
+        } catch (Exception e) {
+            throw new SerializationException("Error when serializing Customer to byte[] " + e);
+        }
+    }
+@Override public void close() {// nothing to close}
+}
+```
+
+This deserializer needs to be configured in the "key.deserializer" or "value.deserializer" property so the consumer 
+can be defined as `KafkaConsumer<String, Customer> consumer = new KafkaConsumer<>(props);`
+
+#### Using Avro deserialization with Kafka consumer
+To use the avro deserializer, we need to define a "schema.registry.url" and define the consumer like in the custom deserializer.
+
+### Standalone Consumer: Why and How to Use a Consumer Without a Group
+In case you want to have a single consumer that always needs to read data from all the partitions in a topic or from a specific partition in a topic, the consumer assign itself to a the partitions it wants to read from:
+
+```java
+List<PartitionInfo> partitionInfos = consumer.partitionsFor("topic");
+for (PartitionInfo partition : partitionInfos) partitions.add(new TopicPartition(partition.topic(), partition.partition()));
+//Assign the partitions directly, but if someone adds new partitions to the topic, the consumer will not be notified
+consumer.assign(partitions);
+```
+
+### Older Consumer APIs
+Apache Kafka still has two older clients written in Scala that are part of the kafka.consumer package, which is part of the core Kafka module: 
+    
+    * SimpleConsumer: Thin wrapper around the Kafka APIs that allows you to consume from specific partitions and offsets
+    * ZookeeperConsumerConnector: Similar to the current consumer, it has consumer groups and it rebalances partitions but uses Zookeeper to manage consumer groups
+    
+## Chapter 5: Kafka Internals<a name="Chapter5"></a> 
