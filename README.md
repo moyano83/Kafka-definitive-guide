@@ -7,6 +7,8 @@
 4. [Chapter 4: Kafka Consumers: Reading Data from Kafka](#Chapter4)
 5. [Chapter 5: Kafka Internals](#Chapter5)
 6. [Chapter 6: Reliable Data Delivery](#Chapter6)
+7. [Chapter 7: Building Data Pipelines](#Chapter7)
+
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
 Publish/subscribe messaging is a pattern that is characterized by the sender (publisher) of a piece of data (message) not specifically directing it to a receiver. Instead, the publisher classifies the message somehow, and that receiver (subscriber) subscribes to receive certain classes of messages.
@@ -513,3 +515,88 @@ In order to delete a key from the system completely, not even saving the last me
 The compact policy never compacts the current segment. In version 0.10.0 and older, Kafka will start compacting when 50% of the topic contains dirty records. In future versions, the plan is to add a grace period during which we guarantee that messages will remain uncompacted.
 
 ## Chapter 6: Reliable Data Delivery<a name="Chapter6"></a>
+### Reliability Guarantees
+The same way RDBMS comes with ACID (atomicity, consistency, isolation, and durability) reliability guarantees, kafka has its own: 
+
+    * Kafka provides order guarantee of messages in a partition
+    * Produced messages are considered “committed” when they were written to the partition on all its in-sync replicas (but not necessarily flushed to disk) 
+    * Messages that are committed will not be lost as long as at least one replica remains alive
+    * Consumers can only read messages that are committed
+    
+### Replication
+An in-sync replica that is slightly behind can slow down producers and consumers— since they wait for all the in-sync replicas to get the message before it is committed. Once a replica falls out of sync, we no longer wait for it to get messages. However, fewer in-sync replicas, the effective replication factor of the partition is lower and therefore there is a higher risk for downtime or data loss.
+
+### Broker configuration
+Many broker configuration variables can apply at the broker level, and at the topic level.
+
+#### Replication Factor
+The topic-level configuration is _replication.factor_. At the broker level, you control the _default.replication.factor_ for automatically created topics. The default is 3, which is good enough for most applications. Try to use the _broker.rack_ broker configuration parameter to configure the rack name for each broker.
+
+#### Unclean Leader Election
+Set at broker level through _unclean.leader.election.enable_ (defaults true). When no in-sync replicas exists except for the leader that just became unavailable there is two ways to handle this scenario:
+
+    * If we don’t allow the out-of-sync replica to become the new leader, the partition will remain offline until we bring the old leader back online
+    * If we do allow the out-of-sync replica to become the new leader, we are going to lose all messages that were written to the old leader while that replica was out of sync and also cause some inconsistencies in consumers. If the old leader is recovered after, it will delete any messages it got that are ahead of the current leader. Those messages will not be available to any consumer in the future
+
+Unclean leader election is disabled in systems where data quality and consistency is critical and is enabled when availability is more important.
+
+#### Minimum In-Sync Replicas
+Both the topic and the broker-level configuration are called _min.insync.replicas_, the parameter controls how many replicas needs to be in-sync to write to a partition. If the number of in-sync replicas fall below this number, the brokers will no longer accept produce requests, throwing a _NotEnoughReplicasException_. Consumers can still read existing data.
+
+### Using Producers in a Reliable System
+There are two important things that everyone who writes applications that produce to Kafka must pay attention to:
+    
+    * Use the correct acks configuration to match reliability requirements
+    * Handle errors correctly both in configuration and in code
+    
+#### Configuring Producer Retries
+The producer can handle retriable errors that are returned by the broker for you. Kafka’s cross-DC replication tool is configured by default to retry endlessly (i.e. retries = MAX_INT). Retrying to send a failed message often includes a small risk of creating duplicate messages. Retries and careful error handling can guarantee that each message will be stored at least once, but we can't guarantee it will be stored exactly once. Applications are often designed to create idempotent messages or include message IDs to deal with this risk.
+
+#### Additional Error Handling
+As a developer, you must still be able to handle other types of errors. These include:
+    
+    *Nonretriable broker errors such as errors regarding message size, authorization errors, etc.
+    *Errors that occur before the message was sent to the broker—for example, serialization errors
+    *Errors that occur when the producer exhausted all retry attempts or when the available producer's memory is filled to store messages while retrying
+    
+### Using Consumers in a Reliable System
+Consumers must make sure they keep track of which messages they've or haven't read. For each partition it is consuming, the consumer stores its current location, so they or another consumer will know where to continue after a restart. The main way consumers can lose messages is when committing offsets for events they've read but didn't completely process yet. 
+
+#### Important Consumer Configuration Properties for Reliable Processing
+There are 4 important consumer configurations to take into account:
+ 
+    *  group.id: Two consumers with the same group id subscribed to the same topic would get assignet a subset of the partitions in the topic, to process all messages in a topic, a consumer must have a unique id
+    * auto.offset.reset: Controls what the consumer will do when no offsets were committed or when the consumer asks for offsets that don’t exist in the broker. If you choose earliest, the consumer will start from the beginning of the partition whenever it doesn’t have a valid offset. If you choose latest, the consumer will start at the end of the partition
+    * enable.auto.commit: The automatic offset commit guarantees you will never commit an offset that you didn't process (might lead to duplicates)
+    * auto.com mit.interval.ms: This configuration lets you configure how frequently they will be committed if commits are automatic (default 5s)
+    
+#### Explicitly Committing Offsets in Consumers
+Some recommendations in case the consumer is designed to commit its offsets:
+
+    * Always commit offsets after events were processed: You can use the auto-commit config‐ uration or commit events at the end of the poll loop
+    * Commit frequency is a trade-off between performance and number of duplicates in the event of a crash (committing has some performance overhead)
+    * Make sure you know exactly what o sets you are committing (it is critical to always commit offsets for messages after they were processed)
+    * Rebalances: Remember you need to handle rebalances properly, usually involves committing offsets before partitions are revoked and cleaning any state you maintain when you are assigned new partitions
+    * Consumers may need to retry: Unlike traditional pub/sub messaging systems, you commit offsets and not ack individual messages. One option, when you encounter a retriable error, is to commit the last record you processed successfully. Then store the records that still need to be processed in a buffer and keep trying to process the records, or else, write it to a separate topic and continue
+    * Consumers may need to maintain state: If you need to maintain state, one way to do this is to write the latest accumulated value to a “results” topic at the same time you are committing the offset
+    * Handling long processing times: For long running calls, even if you don’t want to process additional records, you must continue polling so the client can send heartbeats to the broker. A common pattern in these cases is to hand off the data to a thread-pool when possible with multiple threads to speed things up a bit by processing in parallel while the consumer keeps polling without fetching any data
+    * Exactly-once delivery: A way to achieve this is to write results to a system that has some support for unique keys (making it idempotent). You can also write to a system that supports transactions, records and offsets would be written in the same transation so they'll be in sync
+    
+### Validating System Reliability
+#### Validating Configuration
+It is easy to test the broker and client configuration in isolation from the application logic. Kafka includes two important tools to help with this validation. The _org.apache.kafka.tools_ package includes _VerifiableProducer_ and _VerifiableConsumer_ classes (can be run from command tools or embedded in the code).
+The idea is that the verifiable producer produces a sequence of messages containing numbers from 1 to a value you choose. When you run it, it will print success or error for each message sent to the broker, based on the acks received. You can run different tests like leader election, controller election, rolling restart or unclean leader election. The Apache Kafka source repository includes an extensive test suite.
+
+#### Validating Applications
+Check your application provides the guarantees you need. A recommendation is to test at least the following scenarios:
+
+    * Clients lose connectivity to the server
+    * Leader election
+    * Rolling restart of brokers
+    * Rolling restart of consumers
+    * Rolling restart of producers
+    
+#### Monitoring Reliability in Production
+Kafka’s Java clients include JMX metrics that allow monitoring client-side status and events. For the producers, the two metrics most important for reliability are error-rate and retry-rate per record. On the consumer side, the most important metric is consumer lag (how far the consumer is from the latest message committed). Keep an eye also on the time a message takes to be processed by checking the timestamp (v >= 1.10.0) or adding a timestamp to the message (v < 1.10.0)
+ 
+## Chapter 7: Building Data Pipelines<a name="Chapter7"></a>
