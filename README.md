@@ -8,6 +8,7 @@
 5. [Chapter 5: Kafka Internals](#Chapter5)
 6. [Chapter 6: Reliable Data Delivery](#Chapter6)
 7. [Chapter 7: Building Data Pipelines](#Chapter7)
+8. [Chapter 8: Cross-Cluster Data Mirroring](#Chapter8)
 
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
@@ -600,3 +601,84 @@ Check your application provides the guarantees you need. A recommendation is to 
 Kafka’s Java clients include JMX metrics that allow monitoring client-side status and events. For the producers, the two metrics most important for reliability are error-rate and retry-rate per record. On the consumer side, the most important metric is consumer lag (how far the consumer is from the latest message committed). Keep an eye also on the time a message takes to be processed by checking the timestamp (v >= 1.10.0) or adding a timestamp to the message (v < 1.10.0)
  
 ## Chapter 7: Building Data Pipelines<a name="Chapter7"></a>
+The main value Kafka provides to data pipelines is its ability to serve as a very large, reliable buffer between various stages in the pipeline, effectively decoupling producers and consumers of data within the pipeline.
+
+### Considerations When Building Data Pipelines
+#### Timeliness
+Kafka, can be used to support anything from near-real-time pipelines to hourly batches. Kafka acts as a giant buffer that decouples the time-sensitivity requirements between producers and consumers.
+
+#### Reliability
+To avoid single points of failure and allow for fast and automatic recovery Kafka’s Connect APIs make it easier for connectors to build an end-to-end exactly-once pipeline by providing APIs for integrating with the external systems when handling offsets. 
+
+#### High and Varying Throughput
+With kafka there is no need to couple consumer and producer throughput, Kafka is a high-throughput distributed system capable of processing hundreds of megabytes per second on even modest clusters. The Kafka Connect API focuses on parallelizing the work and not just scaling it out. 
+
+#### Data Formats
+Kafka itself and the Connect APIs are completely agnostic when it comes to data formats. Many sources and sinks have a schema; we can read the schema from the source with the data, store it, and use it to validate compatibility or even update the schema in the sink database, a generic data integration frame‐ work should also handle differences in behavior between various sources and sinks.
+
+#### Transformations
+There are generally two schools of building data pipelines: ETL and ELT, depending on the flexibility and the burden we might want to give to the target system.
+
+#### Security
+In terms of data pipelines, the main security concerns are:
+
+    * Can we make sure the data going through the pipe is encrypted? (for data pipelines that cross datacenter boundaries)
+    * Who is allowed to make modifications to the pipelines?
+    * If the data pipeline needs to read or write from access-controlled locations, can it authenticate properly?
+
+Kafka allows encrypting data on the wire from sources to Kafka and from Kafka to sinks. It also supports authentication (via SASL) and authorization. Kafka also provides an audit log to track access—unauthorized and authorized.
+
+#### Failure Handling
+Because Kafka stores all events for long periods of time, it is possible to go back in time and recover from errors when needed.
+
+#### Coupling and Agility
+There are multiple ways accidental coupling can happen:
+
+    * Ad-hoc pipelines: Building a custom pipeline for each pair of applications tightly couples the data pipeline to the specific end points and creates a mess of integration points
+    * Loss of metadata: If the data pipeline doesn’t preserve schema metadata and does not allow for schema evolution, you end up tightly coupling the software producing the data at the source and the software that uses it at the destination
+    * Extreme processing: Some processing of data is inherent to data pipelines. The recommendation is to preserve as much of the raw data as possible and allow downstream apps to make their own decisions regarding data processing and aggregation
+
+### When to Use Kafka Connect Versus Producer and Consumer
+When writing or reading from Kafka, you have the choice between using traditional producer and consumer clients, or using the Connect APIs and the connectors. Use Kafka clients when you can modify the code of the application that you want to connect an application to and when you want to either push data into Kafka or pull data from Kafka. Use Connect to connect Kafka to datastores that you did not write and whose code you cannot or will not modify.
+If you need to connect Kafka to a datastore and a connector does not exist yet, you can choose between writing an app using the Kafka clients or the Connect API (recommended).
+
+### Kafka Connect
+Kafka Connect is a part of Apache Kafka and provides a scalable and reliable way to move data between Kafka and other datastores. Kafka Connect runs as a cluster of worker processes. You install the connector plugins on the workers and then use a REST API to configure and manage connectors, which run with a specific configuration. Connectors start additional tasks to move large amounts of data in parallel and use the avail‐ able resources on the worker nodes more efficiently.
+
+#### Running Connect
+Kafka Connect ships with Apache Kafka. For production use you should run Connect on separate servers. In this case, install Apache Kafka on all the machines, and simply start the brokers on some servers and start Connect on other servers. To start a connect worker do: `bin/connect-distributed.sh config/connect-distributed.properties`
+Configuration properties to configure Connect:
+
+    * bootstrap.servers: A list of Kafka brokers that Connect will work with
+    * group.id: All workers with the same group ID are part of the same Connect cluster
+    * key.converter and value.converter: The two configurations set the converter for the key and value part of the message that will be stored in Kafka (defaults to JSON)
+    * key.converter.schema.enable and value.converter.schema.enable: Defines if the converter supports JSON messages with or without schema
+    * key.converter.schema.registry.url and value.converter.schema.registry.url: Location of the schema registry
+    * rest.host.name and rest.port: host and name of the Rest api
+    
+#### Connector Example: File Source and File Sink
+To create a connector, we wrote a JSON that includes a connector name, load-kafka- config, and a connector configuration map, which includes the connector class, the file we want to load, and the topic we want to load the file into. Example:
+`echo '{"name":"load-kafka-config", "config":{"connector.class":"FileStreamSource","file":"config/server.properties","topic":"kafka-config-topic"}}' | curl -X POST -d @- http://localhost:8083/connectors --header "content-Type:application/json"`
+We can read back the example file shown before as:
+`echo '{"name":"dump-kafka-config", "config":{"connector.class":"FileStreamSink","file":"copy-of-server-properties","topics":"kafka-config-topic"}}' | curl -X POST -d @- http://localhost:8083/connectors --header "content-Type:application/json"`
+Which would store a file called 'copy-of-server-properties' in our local. To delete the connector simply do:
+`curl -X DELETE http://localhost:8083/connectors/dump-kafka-config`
+
+#### A Deeper Look at Connect
+To understand how Connect works, you need to understand three basic concepts and how they interact
+
+    * Connectors and tasks: Connector plugins implement the connector API, which includes two parts:
+        - Connectors: The connectors determines how many tasks will run for the connector, decides how to split the data-copying work between the tasks and gets configurations for the tasks from the workers and passing it along
+        - Tasks: Tasks are responsible for actually getting the data in and out of Kafka
+    * Workers: Kafka Connect’s worker processes are the “container” processes that execute the connectors and tasks. They handle the HTTP requests that define connectors and their configuration, stores the connector configuration, starts the connectors and their tasks, and passes the appropriate configurations along. They are also responsible for automatically committing offsets for both source and sink connectors and for handling retries when tasks throw errors
+    * Converters and Connect’s data model: Connect APIs includes a data API, which includes both data objects and a schema that describes that data. At the moment Avro object, JSON object, or a string formats are supported.
+    * Offset management: The workers does the offset management for the connectors, the connectors use APIs provided by Kafka to maintain information on which events were already processed. Partitions and offsets are tied to the source type, these are not kafka specific.
+
+#### Alternatives to Kafka Connect
+Other alternatives to connectors might include:
+
+    * Ingest Frameworks for Other Datastores: Hadoop and Elasticsearch has their own tools like Flume or Logstash
+    * GUI-Based ETL Tools:  Informatica, Talend, Pentaho, Apache NiFi and StreamSets, support Apache Kafka as both a data source and a destination
+    * Stream-Processing Frameworks: Almost all stream-processing frameworks include the ability to read events from Kafka and write them to a few other systems
+
+## Chapter 8: Cross-Cluster Data Mirroring<a name="Chapter8"></a>
