@@ -9,6 +9,8 @@
 6. [Chapter 6: Reliable Data Delivery](#Chapter6)
 7. [Chapter 7: Building Data Pipelines](#Chapter7)
 8. [Chapter 8: Cross-Cluster Data Mirroring](#Chapter8)
+9. [Chapter 9: Administering Kafka](#Chapter9)
+10. [Chapter 10: Monitoring Kafka](#Chapter10)
 
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
@@ -682,3 +684,241 @@ Other alternatives to connectors might include:
     * Stream-Processing Frameworks: Almost all stream-processing frameworks include the ability to read events from Kafka and write them to a few other systems
 
 ## Chapter 8: Cross-Cluster Data Mirroring<a name="Chapter8"></a>
+Mirroring is copying data from one kafka cluster to another, apache Kafka’s built-in cross-cluster replicator is called MirrorMaker.
+
+### Use Cases of Cross-Cluster Mirroring
+Cross-cluster mirroring usages:
+
+    * Regional and central clusters: A company might have one or more datacenters in different geographical regions, cities, or continents
+    * Redundancy (DR): If you are concerned about the possibility of the entire cluster becoming unavailable for some reason
+    * Cloud migrations: Applications might run on multiple regions of the cloud provider, for redundancy, or sometimes multiple cloud providers are used
+    
+### Multicluster Architectures
+#### Some Realities of Cross-Datacenter Communication
+Things to consider on cross-datacenter communication:
+
+    * High latencies: Latency between two clusters increases with distance and number of network hops
+    * Limited bandwidth: Wide area networks (WANs) typically have lower bandwidth an more variable than datacenters
+    * Higher costs: Vendors charge for transferring data between datacen‐ ters, regions, and clouds
+    
+Apache Kafka’s brokers and clients were designed, developed, tested, and tuned all within a single datacenter and it is not recommended to install some Kafka brokers in one datacenter and others in another datacenter. The safest form of cross-cluster communication is broker-consumer communication because in the event of network partition that prevents a consumer from reading data, the records remain safe inside the Kafka brokers until communications resume and consumers can read them.
+
+#### Hub-and-Spokes Architecture
+This architecture is intended for the case where there are multiple local Kafka clusters and one central Kafka cluster and is used when data is produced in multiple datacenters and some consumers need access to the entire data set. The data is always produced to the local data- center and that events from each datacenter are only mirrored once. Applications that process data from a single datacenter can be located at that datacenter. Applications that need to process data from multiple datacenters will be located at the central datacenter where all the events are mirrored.
+
+#### Active-Active Architecture
+Used when two or more datacenters share some or all of the data and each datacenter is able to both produce and consume events. Benefits include the ability to serve users from a nearby datacenter, redundancy and resilience. Drawback of this architecture is the challenges in avoiding conflicts when data is read and updated asynchronously in multiple locations. With this configuration, you need to find solutions to avoid replication cycles, keeping users mostly in the same datacenter, and handling conflicts when they occur.
+
+#### Active-Standby Architecture
+Used for disaster recovery scenarios, with two clusters in the same datacenter, one active, the other one a replica of the first one in case the first one fails. The setup is simple, a second cluster mirroring the first one. The drawback is that it wastes resources being idle.
+
+    * Data loss and inconsistencies in unplanned failover:Because the Kafka’s various mirroring solutions are all asynchronous the DR cluster will not have the latest messages from the primary cluster, in case of failover, there will always be some message lost that would depende on the lag  between clusters
+    * Start o set for applications after failover: The most challenging part in failing over to another cluster is making sure applications know where to start consuming data. Approaches:
+        - Auto offset reset: If you are using old consumers that are committing offsets to Zookeeper and you are not mirroring these offsets as part of the DR plan, either start reading from the beginning of available data and handle large amounts of duplicates or skip to the end and miss an unknown number of events (this is the most popular)
+        - Replicate offsets topic: If the consumer is v > 0.9.0 and you mirror the topic '__consumer_offsets' in DR consumer would be able to pick up their old offset. But:
+            1. There is no guarantee that offsets in the primary cluster will match those in the secondary cluster
+            2. Even if you started mirroring immediately when the topic was first cre‐ ated and both the primary and the DR topics start with 0, producer retries can cause offsets to diverge 
+            3. Even if the offsets were perfectly preserved, because of the lag between pri‐ mary and DR clusters and because Kafka currently lacks transactions, an offset committed by a Kafka consumer may arrive ahead or behind the record with this offset
+        - Time-based failover: Messages in v 0.10.0 include a timestamp and brokers include an index and an API for looking up offsets by the timestamp, in case of failover Consumer must be told where to start consuming messages
+        - External offset mapping: You can use an external system like Cassandra to store the mappings between the offsets on the current and failover cluster (this solution is complex and not recommended)  
+    * After the failover: After a failover, if you set the DR cluster to be the primary one and viceversa, you need to consider the problems mentioned before as well as the fact that it is likely that your original primary will have events that the DR cluster does not. The recommended aproach is to delete all the data and committed offsets and then start mirroring from the new primary back to what is now the new DR cluster
+    * A few words on cluster discovery: In the event of failover, your applications will need to know how to start communicating with the failover cluster, so do not hardcode names, use a DNS instead 
+
+#### Stretch Clusters
+Stretch clusters are intended to protect the Kafka cluster from failure in the event an entire datacenter failed. They do this by installing a single Kafka cluster across multiple datacenters. We can configure it so the acknowledgment will be sent after the message is written successfully to Kafka brokers in two datacenters.
+
+### Apache Kafka’s MirrorMaker
+Apache Kafka contains a simple tool for mirroring data between two datacenters called MirrorMaker, and at its core, it is a collection of consumers which are all part of the same consumer group and read data from the set of topics you chose to replicate. The multiple consumers reads and publish to a queue, which is later pushed by the producer to the other cluster every 60 seconds.
+
+#### How to Configure
+
+    * consumer.config: This is the configuration for all the consumers that will be fetching data from the source cluster. All consumers use the same file which mandatory configurations are bootstrap.servers and group.id
+    * producer.config: The configuration for the producer used by MirrorMaker to write to the target cluster. Needs only a bootstra.servers config
+    * new.consumer: MirrorMaker can use the 0.8 consumer or the new 0.9 consumer
+    * num.streams: Each stream is another consumer reading from the source cluster
+    * whitelist: A regular expression for the topic names that will be mirrored (use '.*' for every topic)
+    
+#### Deploying MirrorMaker in Production
+ In a production environment, you will want to run MirrorMaker as a service, running in the background with nohup and redirecting its console output to a log file. A common approach is to use it inside a Docker container. If at all possible, run MirrorMaker at the destination  datacenter, remote consuming is safer than remote producing. When deploying MirrorMaker in production, it is important to remember to monitor it as follows:
+   
+    * Lag monitoring: The lag is the difference in offsets between the latest message in the source Kafka and the latest message in the destination:
+        - Check the latest offset committed by MirrorMaker to the source Kafka cluster. This indicator is not 100% accurate because MirrorMaker doesn’t commit offsets all the time
+        - Check the latest offset read by MirrorMaker, the consumers embedded in MirrorMaker publish key metrics in JMX (one of them is the consumer maximum lag)
+    * Metrics monitoring: MirrorMaker contains a producer and a consumer with metrics like: 
+        - Consumer: fetch-size-avg, fetch-size-max, fetch-rate, fetch-throttle-time-avg, fetch-throttle-time-max, io-ratio and io-wait-ratio
+        - Producer: batch-size-avg, batch-size-max, requests-in-flight, record-retry-rate, io-ratio and io-wait-ratio
+    * Canary: Provides a process that, every minute, sends an event to a special topic in the source cluster and tries to read the event from the destination cluster 
+
+#### Tuning MirrorMaker
+Tunning options for the producer:
+
+    * max.in.flight.requests.per.connection: Defaults to one, which can limit throughput
+    * linger.ms and batch.size: You can increase throughput by introducing a bit of latency, you can also increase batch.size and send larger batches
+
+Tunning options for the consumer:
+
+    * The Partition assignment strategy in MirrorMaker is Range: for large number of topics and partitions change it to Round robin
+    * fetch.max.bytes: If you have available memory, try increasing fetch.max.bytes to allow the consumer to read more data in each request
+    * fetch.min.bytes and fetch.max.wait: If fetch-rate is high, increase both fetch.min.bytes and fetch.max.wait so the consumer will receive more data in each request and the broker will wait until enough data is available before responding to the consumer request
+    
+### Other Cross-Cluster Mirroring Solutions
+#### Uber uReplicator
+Uber got problems with rebalancing delays in consumers due to bouncing MirrorMaker instances, or adding new topics that match the regular expression used, which they solve by listing every topic they need to mirror and avoid surprise rebalances (adding maintenance work). Uber's solution (called uReplicator), uses Apache Helix as a central (but highly available) that will manage the topic list and the partitions assigned to each uReplicator instance
+
+#### Confluent's Replicator
+This solution is designed to solve problems with Diverging cluster configurations (topics can end up with different numbers of partitions, replication factors, and topic-level settings) and Cluster management challenges due to MirrorMaker being typically deployed as a cluster of multiple instances (another cluster to figure out how to deploy, monitor, and manage). Running Replicator inside Connect, we can cut down on the number of kafka (and zookeper) clusters we need to manage.
+
+## Chapter 9: Administering Kafka<a name="Chapter9"></a>
+
+
+
+
+
+
+## Chapter 10: Monitoring Kafka<a name="Chapter10"></a>
+### Metric Basics
+#### Where Are the Metrics?
+All of the metrics exposed by Kafka can be accessed via the Java Management Extensions (JMX) interface that you can use in an external monitoring system attached to the kafka process.
+
+#### Internal or External Measurements
+Metrics provided via an interface such as JMX are internal metrics (created by the application), other metrics such as availability or latency of the requests can be provided by other systems.
+
+#### Application Health Checks
+Make sure that you have a way to also monitor the overall health of the application process: reports whether the broker is up or down and/or rise alerts on the lack of metrics being reported by the Kafka broker.
+
+#### Metric Coverage
+Choose the metrics to look at wisely (it is also hard to properly define thresholds for every metric and keep them up-to-date)
+
+### Kafka Broker Metrics
+#### Under-Replicated Partitions
+This metric gives a count of the number of partitions for which the broker is the leader replica, where the follower replicas are not caught up. A steady (unchanging) number of under-replicated partitions reported by many of the brokers in a cluster normally indicates that one of the brokers in the cluster is offline. If the number of underreplicated partitions is fluctuating, or if the number is steady but there are no brokers offline, this typically indicates a performance issue in the cluster.
+
+##### Cluster-level problems
+Might happend due to unbalanced load or resource exhaustion. To detect unbalanced load, check the metrics partition count, leader partition count, all topics bytes in rate and all topics messages in rate. To resolve this, you will need to move partitions from the heavily loaded brokers to the less heavily loaded brokers with the kafka-reassign-partitions.sh tool. For resource exhaustion, check CPU utilization, inbound and outbound network throughput, disk average wait time and disk percent utilization. Exhausting any of these resources will typically show up as the same problem: under-replicated partitions.
+
+##### Host-level problems
+These types of problems fall into several general categories: hardware failures, conflicts with another process or local configuration differences (A single disk failure on a single broker can destroy the perfor‐mance of an entire cluster).
+
+#### Broker Metrics
+##### Active controller count
+The active controller count metric indicates whether the broker is currently the controller for the cluster (0 or 1).
+ At all times there should be just 1 controller.
+##### Request handler idle ratio
+Kafka uses two thread pools for handling all client requests: network handlers and request handlers. The network handler threads are responsible for reading and writing data to the clients across the network. The request handler threads are responsible for servicing the client request itself, which includes reading or writing the messages to disk. This metric shows the percentage of time the request handlers are not in use (should be above 20%).
+
+##### All topics bytes in
+The all topics bytes in rate (bytes per second) shows how much message traffic your brokers are receiving from producing clients (useful to detect cluster growth needed or uneven balance). All of the rate metrics have seven attributes:
+
+    * EventType: Unit of measurement for all attributes (bytes)
+    * RateUnit: Time period for the rate (seconds)
+    * OneMinuteRate: An average over the previous 1 minute
+    * FiveMinuteRate: An average over the previous 5 minutes
+    * FifteenMinuteRate: An average over the previous 15 minutes
+    * MeanRate: An average since the broker was started
+    * Count: count of the metric since the process was started
+    
+##### All topics bytes out
+Shows the rate at which consumers are reading messages out and has the same attributes previously described. It also includes the replica traffic.
+
+##### All topics messages in
+The messages in rate shows the number of individual messages, regardless of their size, produced per second.
+
+##### Partition count
+Total number of partitions assigned to that broker including replicas. Interesting to measure in cluster with automatic topic creation enabled.
+
+##### Leader count
+The number of partitions that the broker is currently the leader for (should be even across the cluster). Use it along with the partition count to show a percentage of partitions that the broker is the leader for.
+
+##### Offline partitions
+This measurement is only provided by the broker that is the controller for the cluster and shows the number of partitions in the cluster that currently have no leader. They can indicate that brokers hosting replicas for this partition are down or no in-sync replica can take leadership due to message-count mismatches (with unclean leader election disabled).
+
+##### Request metrics
+The following requests have met‐ rics provided:, ApiVersions, ControlledShutdown, CreateTopics, DeleteTopics, DescribeGroups, Fetch, FetchConsumer, FetchFollower, GroupCoordinator, Heartbeat, JoinGroup, LeaderAndIsr, LeaveGroup, ListGroups, Metadata, OffsetCommit, OffsetFetch, Offsets, Produce, SaslHandshake, StopReplica, SyncGroup and UpdateMetadata. For each of these requests, there are eight metrics provided:
+
+    * Total time: Measures the total amount of time the broker spends processing the request, from receiving it to sending the response back to the requestor
+    * Request queue time: The amount of time the request spends in queue after it has been received but before processing starts
+    * Local time: The amount of time the partition leader spends processing a request, including sending it to disk (but not necessarily flushing it)
+    * Remote time: The amount of time spent waiting for the followers before request processing can complete
+    * Trottle time: The amount of time the response must be held in order to slow the requestor down to satisfy client quota settings
+    * Response queue time: The amount of time the response to the request spends in the queue before it can be sent to the requestor
+    * Response send time: The amount of time spent actually sending the response
+    
+The attributes provided for each metric are:
+
+    * Percentiles: 50thPercentile, 75thPercentile, 95thPercentile, 98thPercentile, 99thPer centile, 999thPercentile
+    * Count: Absolute count of number of requests since process start
+    * Min: Minimum value for all requests
+    * Max: Maximum value for all requests
+    * Mean: Average value for all requests
+    * StdDev: The standard deviation of the request timing measurements as a whole
+    
+At a minimum, you should collect at least the average and one of the higher percentiles for the total time metric, as well as the requests per second metric, for every request type.
+
+#### Topic and Partition Metrics
+##### Per-topic metrics
+For all the per-topic metrics, the measurements are very similar to the broker metrics described previously.
+
+##### Per-partition metrics 
+The per-partition metrics tend to be less useful on an ongoing basis than the per- topic metrics. They can be useful like when the partition-size metric indicates the amount of data (in bytes) that is currently being retained on disk for the partition. A discrepancy between the size of two partitions for the same topic can indicate a problem where the messages are not evenly distributed across the key that is being used when producing.
+
+#### JVM Monitoring
+##### Garbage collection
+This is the critical thing to monitor in a JVM. For each of the GC metrics, the two attributes to watch are CollectionCount (number of GC cycles of that type since the JVM started) and CollectionTime (amount of time, in milliseconds, spent in that type of GC cycle since the JVM was started).
+
+##### Java OS monitoring
+The JVM provides information about the OS through the java.lang:type=OperatingSystem bean. The two attributes to monitor are MaxFileDescriptorCount (maximum number of file descriptors (FDs) that the JVM is allowed to have open) and OpenFileDescriptor Count (number of FDs that are currently open).
+
+#### OS Monitoring
+The main OS parameters to monitor are CPU usage, memory usage, disk usage, disk IO, and network usage. The Kafka broker uses a significant amount of processing for handling requests. For this reason, keeping track of the CPU utilization is important when monitoring Kafka. Also, keep track of memory utilization to make sure other applications do not infringe on the broker. Disk is by far the most important subsystem when it comes to Kafka.
+
+#### Logging
+There are two loggers writing to separate files on disk. The first is kafka.controller, still at the INFO level. The information in this log includes topic creation and modification, broker status changes, and cluster activities such as preferred replica elections and partition moves. The other logger to separate is kafka.server.ClientQuotaManager, also at the INFO level. This logger is used to show messages related to produce and consume quota activities. While this is useful information, it is better to not have it in the main broker log file.
+Other interesting log is the kafka.request.logger which logs information about every request sent to the broker, connection end points, request timings, summary information, topic and partition information depending on the log level set.
+
+### Client Monitoring
+#### Producer Metrics
+All of the producer metrics have the client ID of the producer client in the bean names.
+
+##### Overall producer metrics
+This bean provides attributes describing everything from the sizes of the message batches to the memory buffer utilization:
+
+    * record-error-rate: Should always be zero, if not, the producer is dropping messages it is trying to send to the Kafka brokers
+    * request-latency-avg: Average amount of time a produce request sent to the brokers takes
+    * outgoing-byte-rate: Describes the messages in absolute size in bytes per second
+    * record-send-rate: Describes the traffic in terms of the number of messages produced per second
+    * request-rate: Provides the number of pro‐ duce requests sent to the brokers per second
+    * request-size-avg: Provides the average size of the produce requests being sent to the brokers in bytes
+    * batch-size-avg: Provides the average size of a single message batch
+    * record-size-avg: Shows the average size of a single record in bytes
+    * records-per-request-avg: Describes the average number of messages that are in a single produce request
+    * record-queue-time-avg: Average amount of time (ms) that a single message waits in the producer, after the application sends it, before it is actually produced to Kafka  
+
+##### Per-broker and per-topic metrics
+All of the attributes on these beans are the same as the attributes for the overall producer beans described previously, and have the same meaning as described previously but applied to a broker or specific topic.
+
+#### Consumer Metrics
+##### Fetch manager metrics
+The attributes you may want to set up monitoring and alerts for are:
+
+    * fetch-latency-av: Tells us how long fetch requests to the brokers take
+    * bytes-consumed-rate or the records-consumed-rate: Reports how much message traffic your consumer client is handling
+    * fetch-rate: Number of fetch requests per second that the consumer is performing
+    * fetch-size-avg: Average size of those fetch requests in bytes
+    * records-per-request-avg: Average number of messages in each fetch request
+    
+##### Per-broker and per-topic metrics
+Similar to the Producer metrics.
+
+##### Consumer coordinator metrics
+The biggest problem that consumers can run into due to coordinator activities is a pause in consumption while the consumer group synchronizes. This is when the consumer instances in a group negotiate which partitions will be consumed by which individual client instances. Depending on the number of partitions that are being consumed, this can take some time. The coordinator provides the metric attribute sync-time-avg, which is the average amount of time, in milliseconds, that the sync activity takes. The consumer coordinator provides the commit-latency-avg attribute, which measures the average amount of time that offset commits take.
+
+#### Quotas
+Apache Kafka has the ability to throttle client requests in order to prevent one client from overwhelming the entire cluster. Kafka brokers might handle this automatically by delaying responses to the consumers. You can monitor fetch-throttle-time-avg and produce-throttle-time-avg.
+
+### Lag Monitoring
+The most important thing to monitor in consumers is the consumer lag. Measured in number of messages, this is the difference between the last message produced in a specific partition and the last message processed by the consumer. The preferred method of consumer lag monitoring is to have an external process that can watch both the state of the partition on the broker, tracking the offset of the most recently produced message, and the state of the consumer, tracking the last offset the consumer group has committed for the partition. This checking must be performed for every partition that the consumer group consumes.
+Burrow is an open source application that provides consumer status monitoring by gathering lag information for all consumer groups in a cluster and calculating a single status for each group saying whether the consumer group is working properly, falling behind, or is stalled or stopped entirely.
+
+### End-to-End Monitoring
+It is important to have an overview of the system as well as being able to reply to the question :Can I produce and consume messages to/from the Kafka cluster?
+The Kafka Monitoring Tool continually produces and consumes data from a topic that is spread across all brokers in a cluster and measures the availability of both pro‐ duce and consume requests on each broker, as well as the total produce to consume latency.
