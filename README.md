@@ -11,6 +11,7 @@
 8. [Chapter 8: Cross-Cluster Data Mirroring](#Chapter8)
 9. [Chapter 9: Administering Kafka](#Chapter9)
 10. [Chapter 10: Monitoring Kafka](#Chapter10)
+11. [Chapter 11: Stream Processing](#Chapter11)
 
 ## Chapter 1: Meet Kafka<a name="Chapter1"></a>
 ### Publish/Subscribe Messaging
@@ -769,11 +770,130 @@ Uber got problems with rebalancing delays in consumers due to bouncing MirrorMak
 This solution is designed to solve problems with Diverging cluster configurations (topics can end up with different numbers of partitions, replication factors, and topic-level settings) and Cluster management challenges due to MirrorMaker being typically deployed as a cluster of multiple instances (another cluster to figure out how to deploy, monitor, and manage). Running Replicator inside Connect, we can cut down on the number of kafka (and zookeper) clusters we need to manage.
 
 ## Chapter 9: Administering Kafka<a name="Chapter9"></a>
+Kafka provides several command-line interface (CLI) utilities that are useful for mak‐ ing administrative changes to your clusters. 
 
+### Topic Operations
+The kafka-topics.sh tool provides easy access to most topic operations. It allows you to create, modify, delete, and list information about topics in the cluster.
 
+#### Creating a New Topic
+`kafka-topics.sh --zookeeper <zookeeper connect> --create --topic <string> --replication-factor <integer> --partitions <integer>`
 
+#### Adding Partitions
+`kafka-topics.sh --zookeeper <zookeeper connect> --alter --topic <string> --partitions <integer>`
 
+#### Deleting a Topic
+Brokers should be configured with the option delete.topic.enable set to true
+`kafka-topics.sh --zookeeper <zookeeper connect> --delete --topic <string>`
 
+#### Listing All Topics in a Cluster
+`kafka-topics.sh --zookeeper <zookeeper connect> --list`
+
+#### Describing Topic Details
+`kafka-topics.sh --zookeeper <zookeeper connect> --describe`
+The --under-replicated-partitions argument will show all partitions where one or more of the replicas for the partition are not in-sync with the leader. The --unavailable- partitions argument shows all partitions without a leader. 
+
+### Consumer Groups
+When working with older consumer groups, you will access the Kafka cluster by specifying the --zookeeper command-line parameter for the tool. For new consumer groups, you will need to use the --bootstrap-server parameter with the hostname and port number of the Kafka broker to connect to instead.
+
+#### List and Describe Groups
+`kafka-consumer-groups.sh --zookeeper <zookeeper connect> --list` or `kafka-consumer-groups.sh --new-consumer --bootstrap-server <string> --list`
+For any group listed, you can get more details by changing the --list parameter to --describe and adding the --group parameter. 
+
+#### Delete Group
+`kafka-consumer-groups.sh --zookeeper <zookeeper connect> --delete --group <string>` only supported for old consumer clients
+
+#### Offset Management
+It is also possible to retrieve the offsets and store new offsets in a batch.
+
+##### Export Offsets
+Exporting offsets will produce a file that contains each topic partition for the group and its offsets in a defined format that the import tool can read. 
+`kafka-run-class.sh kafka.tools.ExportZkOffsets --zkconnect <zookeeper connect> --group <string> --output-file <string>`
+
+##### Import Offsets
+It takes the file produced by exporting offsets in the previous section and uses it to set the current offsets for the consumer group
+`kafka-run-class.sh kafka.tools.ImportZkOffsets --zkconnect <zookeeper connect> --input-file <string>`
+
+### Dynamic Configuration Changes
+Configurations can be overridden while the cluster is running for topics and for client quotas (separated in the 'kafka-configs.sh' CLI tool).
+
+#### Overriding Topic Configuration Defaults
+The format of the command to change a topic configuration is:
+`kafka-configs.sh --zookeeper <zookeeper connect> --alter --entity-type topics --entity-name <topic name> --add-config <key1>=<value1>[,<key2>...]`
+
+#### Overriding Client Configuration Defaults
+The format of the command to change a client configuration is:
+`kafka-configs.sh --zookeeper <zookeeper connect> --alter --entity-type clients --entity-name <client ID> --add-config <key1>=<value1>[,<key2>...]`
+
+#### Describing Configuration Overrides
+`kafka-configs.sh --zookeeper <zookeeper connect> --describe --entity-type topics --entity-name <string>`
+
+#### Removing Configuration Overrides
+`kafka-configs.sh --zookeeper <zookeeper connect> --alter --entity-type topics --entity-name <string> --delete-config retention.ms`
+
+### Partition Management
+#### Preferred Replica Election
+One way to cause brokers to resume leadership is to trigger a preferred replica election:
+`kafka-preferred-replica-election.sh --zookeeper <zookeeper connect>`
+The request must be written to a Zookeeper znode within the cluster metadata, and if the request is larger than the size for a znode (by default, 1 MB), it will fail. In this case, you will need to create a file that contains a JSON object listing the partitions to elect for and break the request into multiple steps. In that case you can pass the file to the command:
+`kafka-preferred-replica-election.sh --zookeeper <zookeeper connect> --path-to-json-file <string>`
+
+#### Changing a Partition’s Replicas
+If a topic’s partitions are not balanced across the cluster, or is taken offline and the partition is under-replicated or a new broker is added and needs to receive a share of the cluster load, you might want to change the replica assignments for a partition. To generate a set of partition moves, you must create a file that contains a JSON object listing the topics:
+`kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --generate --topics-to-move-json-file <string> --broker-list <comma separated broker id list>`
+The tool will output, on standard output, two JSON objects describing the current partition assignment for the topics and the proposed partition assignment. To execute a proposed partition reassignment from the file generated:
+`kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --execute --reassignment-json-file <string>`
+The kafka-reassign- partitions.sh tool can be used to verify the status of the reassignment:
+`kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --verify`
+
+##### Changing Replication Factor
+There is an undocumented feature of the partition reassignment tool that will allow you to increase or decrease the replication factor for a partition. This can be done by creating a JSON object with the format used in the execute step of partition reassignment and setting the replication factor correctly.
+
+##### Dumping Log Segments 
+There is a helper tool you can use to decode the log segments for a partition. The tool takes a comma-separated list of log segment files as an argument and can print out either message summary information or detailed message data:
+`kafka-run-class.sh kafka.tools.DumpLogSegments --files <files>`
+
+##### Replica Verification
+To validate that the replicas for a topic’s partitions are the same across the cluster, you can use:
+`kafka-replica-verification.sh --broker-list <comma separated list of brokers> --topic-white-list '<regex expression>'`
+
+#### Consuming and Producing
+##### Console Consumer
+The messages are printed in standard out‐ put, delimited by a new line:
+`kafka-console-consumer.sh --zookeeper <zookeeper connect> --topic <string>`
+For new consumers will be `kafka-console-consumer.sh --broker-list <comma separated list of brokers> --topic <string>`
+In addition to the basic command-line options, it is possible to pass any normal consumer configuration options to the console consumer as well.
+You can also see what offsets are being committed for the cluster’s consumer groups:
+`kafka-console-consumer.sh --zookeeper <zookeeper connect> --topic __consumer_offsets --formatter 'kafka.coordinator.GroupMetadataManager$OffsetsMessageFormatter' --max-messages <integer>`
+
+##### Console Producer
+`kafka-console-producer.sh --zookeeper <zookeeper connect> --topic <string>` or `kafka-console-producer.sh --broker-list <comma separated list of brokers> --topic <string>`
+Just like the console consumer, it is possible to pass any normal producer configura‐ tion options to the console producer as well. 
+
+### Client ACLs
+There is a command-line tool, kafka-acls.sh, provided for interacting with access controls for Kafka clients.
+
+### Unsafe Operations
+here are some administrative tasks that are technically possible to do but should not be attempted except in the most extreme situations.
+
+#### Moving the Cluster Controller
+The broker that is currently the controller registers itself using a Zookeeper node at the top level of the cluster path that is named /controller. Deleting this Zookeeper node manually will cause the current controller to resign, and the cluster will select a new controller.
+
+#### Killing a Partition Move
+When a broker fails in the middle of a reassignment and cannot immediately be restarted you might want to attempt to cancel an in-progress reassignment. To remove an in-progress partition reassignment:
+
+    1. Remove the /admin/reassign_partitions Zookeeper node from the Kafka cluster path
+    2. Force a controller move
+    
+#### Removing Topics to Be Deleted
+The command-line tool has no way of knowing whether topic deletion is enabled in the cluster, this will request deletion of topics regardless, which can result in a surprise if deletion is disabled. Topics are requested for deletion by creating a Zookeeper node as a child under /admin/delete_topic, which is named with the topic name. Deleting these Zookeeper nodes (but not the parent /admin/delete_topic node) will remove the pending requests.
+
+#### Deleting Topics Manually
+This requires a full shutdown of all brokers in the cluster, however, and cannot be done while any of the brokers in the cluster are running:
+    
+    1. Shut down all brokers in the cluster
+    2. Remove the Zookeeper path /brokers/topics/TOPICNAME from the Kafka cluster path. Note that this node has child nodes that must be deleted first
+    3. Remove the partition directories from the log directories on each broker. These will be named TOPICNAME-NUM, where NUM is the partition ID
+    4. Restart all brokers
 
 ## Chapter 10: Monitoring Kafka<a name="Chapter10"></a>
 ### Metric Basics
@@ -921,4 +1041,6 @@ Burrow is an open source application that provides consumer status monitoring by
 
 ### End-to-End Monitoring
 It is important to have an overview of the system as well as being able to reply to the question :Can I produce and consume messages to/from the Kafka cluster?
-The Kafka Monitoring Tool continually produces and consumes data from a topic that is spread across all brokers in a cluster and measures the availability of both pro‐ duce and consume requests on each broker, as well as the total produce to consume latency.
+The Kafka Monitoring Tool continually produces and consumes data from a topic that is spread across all brokers in a cluster and measures the availability of both produce and consume requests on each broker, as well as the total produce to consume latency.
+
+## Chapter 11: Stream Processing<a name"Chapter11"></a>
