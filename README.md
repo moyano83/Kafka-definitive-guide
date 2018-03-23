@@ -1044,3 +1044,192 @@ It is important to have an overview of the system as well as being able to reply
 The Kafka Monitoring Tool continually produces and consumes data from a topic that is spread across all brokers in a cluster and measures the availability of both produce and consume requests on each broker, as well as the total produce to consume latency.
 
 ## Chapter 11: Stream Processing<a name"Chapter11"></a>
+### What Is Stream Processing?
+A data stream is an abstraction representing an unbounded (infinite and ever growing) dataset. This unbounded dataset consists of event streams that are ordered, immutable and replayable data records (Kafka allows capturing and replaying a stream of events). Stream processing is a programming paradigm that refers to the ongoing processing of one or more event streams. To put it in comparison with other paradigms:
+
+    * Request-Response: Lowest latency paradigm, usually blocking processing known as online transaction processing (OLTP)
+    * Batch Processing: High latency/High throughput, usually scheduled. Users expects to read stale values
+    * Stream processing: Contentious (continuous) and non blocking. Fits in between the other two
+    
+### Stream-Processing Concepts
+#### Time
+Most stream applications perform operations on time windows. Stream-processing systems typically refer to the following notions of time:
+
+    * Event time: Time the events we are tracking occurred and the record was created. Kafka adds this value automatically for v >= 0.10.0 
+    * Log append time: Time the event arrived to the Kafka broker and was stored there. Kafka adds this value automatically for v >= 0.10.0
+    * Processing time: Time at which a stream-processing application received the event in order to perform some calculation
+    
+#### State
+Stream processing becomes interesting when you have operations that involve multiple events, in those cases, it is not enough to look at each event by itself, you need to keep track of more information. We call the information that is stored between events a state. Stream processing refers to several types of state:
+
+    * Local or internal state: State that is accessible only by a specific instance of the stream-processing application. This state is usually maintained and managed with an embedded, in-memory database running within the application. As a result, many of the design patterns in stream processing focus on ways to partition the data into substreams that can be processed using a limited amount of local state
+    * External state: State that is maintained in an external datastore, often a NoSQL system like Cassandra. Adds extra latency but is unlimited and can be accessed from multiple instances of the application or even from different applications
+
+#### Stream-Table Duality
+Unlike tables, streams contain a history of changes. Streams are a string of events wherein each event caused a change. In order to convert a table to a stream, we need to capture the changes that modify the table. In order to convert a stream to a table, we need to apply all the changes that the stream contains.
+
+#### Time Windows
+Windowed operations are those operating on slices of time, join operations on two streams are also windowed. It is important to consider the size of the window, how often the windows move and how long the window remains updatable (time period during which events will get added to their respective time-slice).
+Windows can be tumbling windows (slices don't overlap) or Hopping windows (events belongs to multiple windows).
+
+### Stream-Processing Design Patterns
+#### Single-Event Processing
+Also known as a map/filter pattern, each event is processed in isolation. The stream-processing app consumes events from the stream, modifies each event, and then produces the events to another stream.
+
+#### Processing with Local State
+Aggregations require maintaining a state for the stream. This can be achieved with local state if we process only aggregations of certain type and not the entiew data (for example 'group by' type aggregates). Several issues must be taken into account:
+
+    * Memory usage: The local state must fit into the available memory on the application instance
+    * Persistence: State must be kept if the application instance is shut down and be recoverable. Kafka Streams state is stored in-memory using embedded RocksDB, which also persists the data to disk for quick recovery after restarts, with all the changes to the local state are also sent to a Kafka topic
+    * Rebalancing: Applications should handle repartitions
+    
+#### Multiphase Processing/Repartitioning
+For global aggregations (i.e. top 10 events), we need a two-phase approach. The first is an aggregate by type doing with local state aggregation. The results are writen to a new topic with a single partition which is consumed by another application (similar to map-reduce).
+
+#### Processing with External Lookup: Stream-Table Join
+Sometimes stream processing requires integration with data external to the stream. External lookups adds significant latency and load to the external system. In order to get good performance and scale, we need to cache the information from the database in our stream-processing application. We need to take into consideration how to refresh the cache and avoid stale values. A solution is to capture all the changes that happen to the database table in a stream of events (known as CDC,), and have our stream-processing job listen to this stream and update the cache based on database change events. This is known as _stream-table join_.
+
+#### Streaming Join
+Sometimes you want to join two real event streams rather than a stream with a table. A streaming-join is also called a windowed-join. In Kafka Streams is that both streams, queries and clicks, are partitioned on the same keys, which are also the join keys. Kafka Streams does this by maintaining the join-window for both topics in its embedded RocksDB cache, and this is how it can perform the join.
+
+#### Out-of-Sequence Events
+To handle events that arrive at the stream at the wrong time, you must consider:
+
+    * Recognize that an event is out of sequence
+    * Define a time period during which it will attempt to reconcile out-of-sequence events
+    * Have an in-band capability to reconcile this event, the same continuous process needs to handle both old and new events at any given moment
+    * Be able to update results
+    
+This is typically done by maintaining multiple aggregation windows available for update in the local state and giving developers the ability to configure how long to keep those window aggregates available for updates.
+
+#### Reprocessing
+There can be reasons to want to rerun some stream recomputation, for example a new version of the application that is run against the same data to compare the results and performance or a bug in the existing application that forces a recalculation. The consideration of having to overwrite the result values is important as it adds complexity, so when possible, just rerun the computations without resetting.
+
+### Kafka Streams by Example
+Apache Kafka has two streams APIs: a low-level Processor API and a high-level Streams DSL. The DSL allows you to define the stream-processing application by defining a chain of transformations to events in the streams. An application that uses the DSL API always starts with using the StreamBuilder to create a processing topology (a DAG), then you create a _KafkaStreams_ execution object from the topology. The processing will continue until the _KafkaStreams_ object is closed.
+
+#### Word Count
+```java
+public class WordCountExample {
+    public static void main(String[] args) throws Exception{
+        Properties props = new Properties();
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "wordcount");
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(StreamsConfig.KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        props.put(StreamsConfig.VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+    
+        //Defining the logic of the application
+        KStreamBuilder builder = new KStreamBuilder();
+        KStream<String, String> source = builder.stream("wordcount-input"); //We read from a kafka topic named wordcount-input
+        final Pattern pattern = Pattern.compile("\\W+");
+        KStream counts  = source.flatMapValues(value -> Arrays.asList(pattern.split(value.toLowerCase())))
+            .map((key, value) -> new KeyValue<Object, Object>(value, value))
+            .filter((key, value) -> (!value.equals("the")))
+            .groupByKey()
+            .count("CountStore").mapValues(value-> Long.toString(value)).toStream(); 
+        counts.to("wordcount-output"); //We write the results to a kafka topic named wordcount-output
+        
+        KafkaStreams streams = new KafkaStreams(builder, props);
+        streams.start();
+        // usually the stream application would be running forever,
+        // in this example we just let it run for some time and stop since the input data is finite.
+        Thread.sleep(5000L);
+        streams.close();
+    }
+}
+```
+
+#### Stock Market Statistics
+For the following example, the following elements are calculated: minimum ask price, number of trades and average ask price for every five-second window:
+
+```java
+public class StockMarketExample {
+    public static void main(String[] args) throws Exception{
+        Properties props = new Properties();
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "stockstat");
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, Constants.BROKER);
+        props.put(StreamsConfig.KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        props.put(StreamsConfig.VALUE_SERDE_CLASS_CONFIG, TradeSerde.class.getName());
+    
+        // This ensures that the stream of events is partitioned based on the record key
+        KStream<TickerWindow, TradeStats> stats = source.groupByKey()
+        // The first parameter this method takes is a new object that will contain the results of the aggregation
+        // The second parameter is a method to aggregate the results,
+        // The third is the Time window, in this case an overlapping window of 5 seconds every second
+        // The fourth is the serde to serialize and deserialize the results of the aggregation
+        // The last parameter is the name of the local store to which the state will be maintained
+            .aggregate(TradeStats::new, (k, v, tradestats) -> tradestats.add(v), TimeWindows.of(5000).advanceBy(1000), new  TradeStatsSerde(), "trade-stats-store")
+        // This method turns the result table into an stream of events and replacing the key that contains the entire time window
+        // definition with our own key that contains just the ticker and the start time of the window 
+            .toStream((key, value) -> new TickerWindow(key.key(), key.window().start()))
+        // Update the average price with the value
+            .mapValues((trade) -> trade.computeAvgPrice());
+        stats.to(new TickerWindowSerde(), new TradeStatsSerde(), "stockstats-output");
+
+    }
+    
+    static public final class TradeSerde extends WrapperSerde<Trade> {
+        public TradeSerde() {
+            super(new JsonSerializer<Trade>(), new JsonDeserializer<Trade>(Trade.class));
+        } 
+    }
+}
+```
+
+#### Click Stream Enrichment
+```java
+public class ClickStreamExample {
+    public static void main(String[] args) throws Exception{
+        Properties props = new Properties();
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, "wordcount");
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        props.put(StreamsConfig.KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+        props.put(StreamsConfig.VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
+    
+        KStreamBuilder builder = new KStreamBuilder();
+        //Defining the logic of the application, these are the two streams we want to join        
+        KStream<Integer, PageView> views = builder.stream(Serdes.Integer(), new PageViewSerde(), Constants.PAGE_VIEW_TOPIC);
+        KStream<Integer, Search> searches = builder.stream(Serdes.Integer(), new SearchSerde(), Constants.SEARCH_TOPIC);
+        // Table for the user profiles, a KTable is a local cache that is updated through a stream of changes
+        KTable<Integer, UserProfile> profiles = builder.table(Serdes.Integer(), new ProfileSerde(), Constants.USER_PROFILE_TOPIC, "profile_store");
+        // Joining the stream of events with the profile table, clicks without a know user will be preserved
+        KStream<Integer, UserActivity> viewsWithProfile = views.leftJoin(profiles, 
+            (page, profile) -> new UserActivity(profile.getUserID(), profile.getUserName(), profile.getZipcode(), profile.getInterests(), "", page.getPage()));
+        // Joining two streams, not streaming to a table, a stream-to-stream join is a join with a time window
+        KStream<Integer, UserActivity> userActivityKStream =
+        viewsWithProfile.leftJoin(searches, (userActivity, search) -> userActivity.updateSearch(search.getSearchTerms()),
+            JoinWindows.of(1000), Serdes.Integer(), new UserActivitySerde(), new SearchSerde());
+        
+        KafkaStreams streams = new KafkaStreams(builder, props);
+        streams.start();
+    }
+}
+```
+
+### Kafka Streams: Architecture Overview
+#### Building a Topology
+Every streams application implements and executes at least one topology, which is a set of operations and transitions that every event moves through from input to output. The topology is made up of processors (nodes in the DAG). There are source processors (consume data from a topic and pass it on), and sink processors (which take data from earlier processors and produce it to a topic). A topology always starts with one or more source processors and finishes with one or more sink processors.
+
+#### Scaling the Topology
+Kafka Streams scales by allowing multiple threads of executions within one instance of the application and by supporting load balancing between distributed instances of the application. The Streams engine parallelizes execution of a topology by splitting it into tasks. The number of tasks is determined by the Streams engine and depends on the number of partitions in the topics that the application processes. Each task is responsible for a subset of the partitions: the task will subscribe to those partitions and consume events from them. For every event it consumes, the task will execute all the processing steps that apply to this partition in order before eventually writing the result to the sink. Those tasks are the basic unit of parallelism in Kafka Streams.
+The developer of the application can choose the number of threads each application instance will execute. If multiple threads are available, every thread will execute a subset of the tasks that the application creates. If multiple instances of the application are running on multiple servers, different tasks will execute for each thread on each server. You will have as many tasks as you have partitions in the topics you are processing.
+A processing step may require results from multiple partitions, which could create dependencies between tasks, Kafka Streams handles this situation by assigning all the partitions needed for one join to the same task so that the task can consume from all the relevant partitions and perform the join independently which requires that all topics that participate in a join operation will have the same number of partitions and be partitioned based on the join key.
+Dependency between tasks might occur also if a repartition happens and changes the repartition key. This requires a shuffle that would send the events to other tasks to process further: Kafka Streams repartitions by writing the events to a new topic with new keys and partitions (no communication or shared resources are shared between tasks).
+
+#### Surviving Failures
+The data consumed by Kafka streams is highly available as it comes from Kafka. If a task failed but there are threads or other instances of the streams application that are active, the task will restart on one of the available threads.
+
+### How to Choose a Stream-Processing Framework
+Different types of applications call for different stream-processing solutions. Ingest with some modification of the data, low milliseconds actions, asynchronous microservices (which may need to maintain a local state caching events as a way to improve performance) or near real-time data analytics with complex aggregations and joins requires different approaches:
+
+    * For ingest problems: Decide if you need streaming or ingest systems (connectors). For stream processing systems, make sure it has both a good selection of connectors and high-quality connectors for the systems you are targeting
+    * For low milliseconds actions: Request-response patterns usually works better. If you want a stream-processing system, choose one that supports an event-by-event low-latency model rather than one that focuses on microbatches
+    * For asynchronous microservices: A stream processing system that integrates well with your message bus of choice, has change capture capabilities that easily deliver upstream changes to the micro‐service local caches, and has the good support of a local store that can serve as a cache or materialized view of the microservice data
+    * For complex analytics engine: A stream-processing system with great support for a local store to support advanced aggregations, windows, and joins that are otherwise difficult to implement. The APIs should include support for custom aggregations, window operations, and multiple join types.
+    
+Other global considerations:
+
+    * Operability of the system: How difficult is to monitor, scale, integrate with the existing infrastructure or reprocess data
+    * Usability of APIs and ease of debugging: Consider development time and time-to-market
+    * Makes hard things easy: How difficult is to implement complex aggregations and abstractions
+    * Community: Wide support means new functionality delivered regularly
