@@ -22,7 +22,7 @@ Kafka is a publish/subscribe messaging system often described as a _distributed 
 The unit of data within kafka is the _message_, and it is treated as an array of bytes, a message can have an optional bit of metadata, which is referred to as a key (also an array of bytes). Messages are written into Kafka in batches (typically compressed), a batch is just a collection of messages, all of which are being produced to the same topic and partition.
 
 ### Schemas
-While messages are opaque byte arrays to Kafka itself, it is recommended that additional structure, or schema, be imposed on the message content so that it can be easily understood. Many Kafka developers favor the use of Apache Avro, which provides a compact serialization format; schemas that are separate from the message pay‐ loads and that do not require code to be generated when they change; and strong data typing and schema evolution, with both backward and forward compatibility.
+While messages are opaque byte arrays to Kafka itself, it is recommended that additional structure, or schema, be imposed on the message content so that it can be easily understood. Many Kafka developers favor the use of Apache Avro, which provides a compact serialization format; schemas that are separate from the message pay‐loads and that do not require code to be generated when they change; and strong data typing and schema evolution, with both backward and forward compatibility.
 
 ### Topics and Partitions
 Messages in Kafka are categorized into topics (analogous to a table in a DB), and broken down into partitions which are append only logs read in order from the beginning to the end, order is only guaranteed in the partitions, but not in the topics.
@@ -31,8 +31,8 @@ Messages in Kafka are categorized into topics (analogous to a table in a DB), an
 Producers write messages to topics, but can also write messages to partitions by using the message key and a partitioner. Consumers read messages, they subscribe to one or more topics and read messages in order, keeping track of the messages that has already been consumed (by means of offset which is a bit of metadata). A consumer works in a consumer group, one or more consumers that works together to consume a topic. The group assures that each partition is only consumed by one member.
 
 ### Brokers and Clusters
-A single Kafka server is called a broker, it receives messages from producers, assigns offsets to them, and commits the messages to storage on disk. It also services consumers, responding to fetch requests for partitions and responding with the mes‐ sages that have been committed to disk.
-Kafka servers works in clusters, which has a _controller_ (elected from one of the nodes) responsible for administrative operations. A partition is handled by a single broker in the cluster (leader of the partition), although the partition can be replicated in multiple brokers. Messages are stored in the brokers by default for 7 days (retention), or until the topic reaches certain size (default to 1GB).
+A single Kafka server is called a broker, it receives messages from producers, assigns offsets to them, and commits the messages to storage on disk. It also services consumers, responding to fetch requests for partitions and responding with the messages that have been committed to disk.
+Kafka servers works in clusters, which has a _controller_ (elected from one of the nodes) responsible for administrative operations. A partition is handled by a single broker in the cluster (leader of the partition), although the partition can be replicated in multiple brokers. Messages are stored in the brokers by default for 7 days (retention), or until the topic reaches certain size (defaults to 1GB).
 
 ## Chapter 2: Installing Kafka<a name="Chapter2"></a>
 ### Installing zookeeper
@@ -102,16 +102,15 @@ Several factors that will contribute to the overall performance: disk throughput
 Considerations on configuring a kafka cluster:
 
     * Number of brokers: Depends on the overall disk capacity, capacity of network interfaces...
-    * Broker configuration: All brokers must have the same config‐ uration for the _zookeeper.connect_ parameter and all brokers must have a unique value for the _broker.id_
-    * OS Tuning: Few configuration changes can be made to improve kafka performance
+    * Broker configuration: All brokers must have the same configuration for the _zookeeper.connect_ parameter and all brokers must have a unique value for the _broker.id_   
+    * OS Tuning: A few configuration changes can be made to improve kafka performance
         - Virtual memory: Try to avoid memory swaps. Disable it, or set vm.swappiness parameter to a very low value, such as 1. In regards to I/O the number of dirty pages that are allowed, before the flush background process starts writing them to disk, can be reduced by setting the =vm.dirty_background_ratio value lower than the default of 10. The total number of dirty pages that are allowed before the kernel forces synchronous operations to flush them to disk can also be increased by changing the value of vm.dirty_ratio (defaults 20) 
         - Disk: The Extents File System (XFS) is used in most of linux distributions due to performance reasons.
-        - Networking: The recommended changes for Kafka are the same as those suggested for most web servers and 
-        other networking applications. The first adjustment is to change the default and maximum amount of memory allocated for the send and receive buffers for each socket (_net.core.wmem_default_, _net.core.rmem_default_, _net.core.wmem_max_ and net.core.rmem_max). The send and receive buffer sizes for TCP sockets must be set separately using the _net.ipv4.tcp_wmem_ and _net.ipv4.tcp_rmem_ parameters, the maximum size cannot be larger than the values specified for all sockets.
+        - Networking: The recommended changes for Kafka are the same as those suggested for most web servers and other networking applications. The first adjustment is to change the default and maximum amount of memory allocated for the send and receive buffers for each socket (_net.core.wmem_default_, _net.core.rmem_default_, _net.core.wmem_max_ and net.core.rmem_max). The send and receive buffer sizes for TCP sockets must be set separately using the _net.ipv4.tcp_wmem_ and _net.ipv4.tcp_rmem_ parameters, the maximum size cannot be larger than the values specified for all sockets.
 
 ### Production Concerns
 #### Garbage Collector Options
-Garbage First (or G1) garbage collector is designed to automatically adjust to different workloads and provide consis‐ tent pause times for garbage collection over the lifetime of the application. Some options:
+Garbage First (or G1) garbage collector is designed to automatically adjust to different workloads and provide consistent pause times for garbage collection over the lifetime of the application. Some options:
 
     * MaxGCPauseMillis: Preferred pause time for each garbage-collection cycle (not a hard limit, can be exceeded)
     * InitiatingHeapOccupancyPercent: Percentage of the total heap that may be in use before G1 will start a collection cycle
@@ -124,7 +123,7 @@ export KAFKA_JVM_PERFORMANCE_OPTS="-server -XX:+UseG1GC -XX:MaxGCPauseMillis=20 
 ```
 
 ### Colocating Applications on Zookeeper
-Kafka utilizes Zookeeper for storing metadata information about the brokers, topics, and partitions. Writes to Zookeeper are only performed on changes to the member‐ ship of consumer groups or on changes to the Kafka cluster itself (does not justify a dedicated zookeeper ensemble). Consumers have a configurable choice to use either Zookeeper or Kafka for committing offsets. These commits can be a significant amount of Zookeeper traffic, especially in a cluster with many consumers, and will need to be taken into account.
+Kafka utilizes Zookeeper for storing metadata information about the brokers, topics, and partitions. Writes to Zookeeper are only performed on changes to the membership of consumer groups or on changes to the Kafka cluster itself (does not justify a dedicated zookeeper ensemble). Consumers have a configurable choice to use either Zookeeper or Kafka for committing offsets. These commits can be a significant amount of Zookeeper traffic, especially in a cluster with many consumers, and will need to be taken into account.
 
 ## Chapter 3: Kafka Producers: Writing Messages to Kafka<a name="Chapter3"></a>
 ### Producer Overview
@@ -144,10 +143,10 @@ There is three primary methods of sending messages:
     * Asynchronous send: We call the send() method with a callback function, which gets triggered when it receives a response from the Kafka broker
      
 ### Sending a Message to Kafka
-Example of Producer creationg and message sending:
+Example of Producer creation and message sending:
 
 ```java
-//Example of creating a producer and sending a message
+//Example of creating a producer and sending a message 'fire and forget'
 private Properties kafkaProps = new Properties();
 kafkaProps.put("bootstrap.servers", "broker1:9092,broker2:9092");
 kafkaProps.put("key.serializer","org.apache.kafka.common.serialization.StringSerializer");
@@ -195,13 +194,13 @@ Some parameters that can have a significant impact on memory use, performance, a
     * retries:  How many times the producer will retry sending the message before giving up and notifying the client of an issue
     * retry.backoff.ms: milliseconds to wait after a failed attempt of message send (defaults 100ms)
     * batch.size: Messages to the same partition are batched together, this parameter controls the amount of bytes used for each batch
-    * linger.ms: Controls the amount of time to wait for additional messages before send‐ ing the current batch (a batch is send either when the buffer is full, or when the linger period is reached). By default, the producer will send messages as soon as there is a sender thread available to send them, even if there’s just one message in the batch.
+    * linger.ms: Controls the amount of time to wait for additional messages before sending the current batch (a batch is send either when the buffer is full, or when the linger period is reached). By default, the producer will send messages as soon as there is a sender thread available to send them, even if there’s just one message in the batch.
     * client.id: Producer identifier, can be any string
     * max.in.flight.requests.per.connection: Controls how many messages the producer will send to the server without receiving responses
     * timeout.ms, request.timeout.ms, and metadata.fetch.timeout.ms: control how long the producer will wait for a reply from the server when sending data (request.timeout.ms) and when requesting metadata (metadata.fetch.timeout.ms) or the time the broker will wait for in-sync replicas to acknowledge the message in order to meet the acks configuration (timeout.ms).
     * max.block.ms: How long the producer will block when calling send() and when explicitly requesting metadata via partitionsFor()
     * max.request.size: Size of a produce request sent by the producer. It caps both the size of the largest message that can be sent and the number of messages that the producer can send in one request.
-    * receive.buffer.bytes and send.bu er.bytes: Sizes of the TCP send and receive buffers used by the sockets when writing and reading data (-1 for using the OS defaults)
+    * receive.buffer.bytes and send.buffer.bytes: Sizes of the TCP send and receive buffers used by the sockets when writing and reading data (-1 for using the OS defaults)
     
 ### Serializers
 #### Custom Serializers 
@@ -278,7 +277,7 @@ As with the Serializer, a custom Partitioner can be implemented by extending the
 Kafka consumers are typically part of a consumer group. When multiple consumers are subscribed to a topic and belong to the same consumer group, each consumer in the group will receive messages from a different subset of the partitions in the topic. If we add more consumers to a single group with a single topic than we have partitions, some of the consumers will be idle and get no messages at all. Kafka topic is scaled by adding more consumers to a consumer group (but the number of partitions determines the consumption rate). To make sure an application gets all the messages in a topic (for example multiple applications consuming the same topic), ensure the application has its own consumer group, what a consumer group does with the messages doesn't affect the other consumer groups.
 
 #### Consumer Groups and Partition Rebalance
-Reassignment of partitions to consumers happens when a consumer is added to the group, a consumer leaves the group or the topics the consumer group is consuming are modified (i.e. new partitions are added). Moving partition ownership from one consumer to another is called a rebalance. During a rebalance, consumers can't consume messages, so a rebalance is basically a short window of unavail‐ ability of the entire consumer group. Consumers maintain membership in a consumer group and ownership of the partitions assigned to them is by sending heartbeats to a Kafka broker designated as the group coordinator.
+Reassignment of partitions to consumers happens when a consumer is added to the group, a consumer leaves the group or the topics the consumer group is consuming are modified (i.e. new partitions are added). Moving partition ownership from one consumer to another is called a rebalance. During a rebalance, consumers can't consume messages, so a rebalance is basically a short window of unavailability of the entire consumer group. Consumers maintain membership in a consumer group and ownership of the partitions assigned to them is by sending heartbeats to a Kafka broker designated as the group coordinator.
 
 ### Creating a Kafka Consumer
 Similar to creating a producer, you pass a list of properties to the constructor of consumer with the three mandatory configurations: _bootstrap.servers_, _key.deserializer_, and _value.deserializer_ (and optionally _group.id_):
@@ -359,7 +358,7 @@ If your consumer maintained a buffer with events that it only processes occasion
 calling the _subscribe()_ method, which has two methods:
 
     * 'public void onPartitionsRevoked(Collection<TopicPartition> partitions)': Called before rebalancing starts and after the consumer stopped consuming messages
-    * 'public void onPartitionsAssigned(Collection<TopicPartition> partitions)': Called after partitions have been reassigned to the broker, but before the con‐ sumer starts consuming messages
+    * 'public void onPartitionsAssigned(Collection<TopicPartition> partitions)': Called after partitions have been reassigned to the broker, but before the consumer starts consuming messages
     
 ### Consuming Records with Specific Offsets
 So start reading all messages from the beginning of the partition, use `consumer.seekToBeginning(TopicPartition tp)` to skip all the way to the end of the partition use `consumer.seekToEnd(TopicPartition tp)`, but to seek a specific offset use `consumer.seek(TopicPartition tp, Integer Offset)`. This is likely done in the previously described `onPartitionsAssigned` method of a _ConsumerRebalanceListener_ instance (for example getting the offset from a database instead of Kafka).
