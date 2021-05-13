@@ -403,16 +403,16 @@ group coordinator.
 
 ### Creating a Kafka Consumer
 
-Similar to creating a producer, you pass a list of properties to the constructor of consumer with the three mandatory configurations: _
-bootstrap.servers_, _key.deserializer_, and _value.deserializer_ (and optionally _group.id_):
+Similar to creating a producer, you pass a list of properties to the constructor of consumer with the three mandatory configurations:
+_bootstrap.servers_, _key.deserializer_, and _value.deserializer_ (and optionally _group.id_):
 
-```java
+```
 Properties props=new Properties();
-        props.put("bootstrap.servers","broker1:9092,broker2:9092");
-        props.put("group.id","CountryCounter");
-        props.put("key.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
-        props.put("value.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
-        KafkaConsumer<String, String> consumer=new KafkaConsumer<String, String>(props);
+props.put("bootstrap.servers","broker1:9092,broker2:9092");
+props.put("group.id","CountryCounter");
+props.put("key.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+props.put("value.deserializer","org.apache.kafka.common.serialization.StringDeserializer");
+KafkaConsumer<String, String> consumer=new KafkaConsumer<String, String>(props);
 ```
 
 To subscribe the previous consumer to a topic, we do `consumer.subscribe(Collections.singletonList("topicName"))`, although is possible to subscribe
@@ -424,49 +424,41 @@ Kafka and another system.
 A pool loop is used to consume messages from the server, once the consumer subscribe to topics, the poll loop handles all details of coordination,
 partition rebalances, heartbeats, and data fetching. We must consider the rule of one consumer per thread.
 
-```java
+```
 try{
-        while(true){
-//consumers must keep polling Kafka or they will be considered dead, the parameter is a timeout interval which 
-//specifies how long poll will block if data is not available in the consumer buffer
+    while(true){
+    //consumers must keep polling Kafka or they will be considered dead, the parameter is a timeout interval which 
+    //specifies how long poll will block if data is not available in the consumer buffer
         ConsumerRecords<String, String> records=consumer.poll(100);
         for(ConsumerRecord<String, String> r:records){
-        log.debug("topic = %s, partition = %s, offset = %d,customer = %s, country = %s\n",r.topic(),r.partition(),
-        r.offset(),r.key(),r.value());
+            log.debug("topic = %s, partition = %s, offset = %d,customer = %s, country = %s\n",r.topic(),r.partition(),
+            r.offset(),r.key(),r.value());
         }
-        }
-        }finally{
-        consumer.close(); //Closes the network connections and sockets and triggers a rebalance immediately
-        }
+    }
+}finally{
+    consumer.close(); //Closes the network connections and sockets and triggers a rebalance immediately
+}
 ```
 
 ### Configuring Consumers
 
 Other important consumer configuration parameters:
 
-    * fetch.min.bytes: Specifies the minimum amount of data that it wants to receive from the broker when fetching 
-    records. If a broker receives a request for records from a consumer but the new records amount to fewer bytes 
-    than min.fetch.bytes
-    * fetch.max.wait.ms: Configures Kafka to wait until it has enough data to send before responding to the consumer 
-    (defaults 500ms)
-    * max.partition.fetch.bytes: Controls the maximum number of bytes the server will return per partition (defaults 
-    to 1MB), it must be larger than the largest message a broker will accept
-    * session.timeout.ms: The amount of time a consumer can be out of contact with the brokers while still considered
-     alive (defaults 3s)
-    * auto.offset.reset: Controls the behavior of the consumer when it starts reading a partition for which it 
-    doesn’t have a committed offset or if the committed offset it has is invalid. The default is 'latest' but can be 
-    set to 'earliest' too
-    * enable.auto.commit: Defaults to true, you might also want to control how frequently offsets will be committed 
-    using auto.commit.interval.ms
-    * partition.assignment.strategy: There is two strategies (defaults to org.apache.kafka.clients.consumer
-    .RangeAssignor):
+    * fetch.min.bytes: Specifies the minimum amount of data that it wants to receive from the broker when fetching records. If a broker receives a 
+      request for records from a consumer but the new records amount to fewer bytes than min.fetch.bytes
+    * fetch.max.wait.ms: Configures Kafka to wait until it has enough data to send before responding to the consumer (defaults 500ms)
+    * max.partition.fetch.bytes: Controls the maximum number of bytes the server will return per partition (defaults to 1MB), it must be larger 
+      than the largest message a broker will accept
+    * session.timeout.ms: The amount of time a consumer can be out of contact with the brokers while still consideredalive (defaults 3s)
+    * auto.offset.reset: Controls the behavior of the consumer when it starts reading a partition for which it doesn’t have a committed offset or 
+      if the committed offset it has is invalid. The default is 'latest' but can be set to 'earliest' too
+    * enable.auto.commit: Defaults to true, you might also want to control how frequently offsets will be committed using auto.commit.interval.ms
+    * partition.assignment.strategy: There is two strategies (defaults to org.apache.kafka.clients.consumer.RangeAssignor):
         - Range: Assigns to each consumer a consecutive subset of partitions from each topic it subscribes to
-        - Round RobinTakes all the partitions from all subscribed topics and assigns them to consumers sequentially, 
-        one by one
+        - Round RobinTakes all the partitions from all subscribed topics and assigns them to consumers sequentially, one by one
     * client.id: Can be any string. Used in logging and metrics and for quotas
     * max.poll.records: Controls the maximum number of records that a single call to poll() will return
-    * receive.buffer.bytes and send.buffer.bytes: Sizes of the TCP send and receive buffers used by the sockets when 
-    writing and reading data
+    * receive.buffer.bytes and send.buffer.bytes: Sizes of the TCP send and receive buffers used by the sockets when writing and reading data
 
 ### Commits and Offsets
 
@@ -518,10 +510,10 @@ If your consumer maintained a buffer with events that it only processes occasion
 losing ownership of the partition (or close file handles, database connections...). You can pass a _ConsumerRebalanceListener_ when calling the _
 subscribe()_ method, which has two methods:
 
-    * 'public void onPartitionsRevoked(Collection<TopicPartition> partitions)': Called before rebalancing starts and 
-    after the consumer stopped consuming messages
-    * 'public void onPartitionsAssigned(Collection<TopicPartition> partitions)': Called after partitions have been 
-    reassigned to the broker, but before the consumer starts consuming messages
+    * 'public void onPartitionsRevoked(Collection<TopicPartition> partitions)': Called before rebalancing starts and after the consumer stopped 
+      consuming messages
+    * 'public void onPartitionsAssigned(Collection<TopicPartition> partitions)': Called after partitions have been reassigned to the broker, but 
+      before the consumer starts consuming messages
 
 ### Consuming Records with Specific Offsets
 
@@ -536,19 +528,19 @@ When you decide to exit the poll loop, you will need another thread to call _con
 thread, this can be done from ShutdownHook, calling wakeup will cause poll() to exit with _WakeupException_. The _WakeupException_ doesn't need to be
 handled, but before exiting the thread, you must call `consumer.close()`.
 
-```java
+```
 // This code is meant to be executed in the main application thread
 Runtime.getRuntime().addShutdownHook(new Thread(){
-public void run(){
+    public void run(){
         System.out.println("Starting exit...");
         consumer.wakeup();
         try{
-        mainThread.join();
+            mainThread.join();
         }catch(InterruptedException e){
-        e.printStackTrace();
+            e.printStackTrace();
         }
-        }
-        });
+    }
+});
 ```
 
 ### Deserializers
@@ -615,8 +607,8 @@ List<PartitionInfo> partitionInfos=consumer.partitionsFor("topic");
 Apache Kafka still has two older clients written in Scala that are part of the kafka.consumer package, which is part of the core Kafka module:
 
     * SimpleConsumer: Thin wrapper around the Kafka APIs that allows you to consume from specific partitions and offsets
-    * ZookeeperConsumerConnector: Similar to the current consumer, it has consumer groups and it rebalances 
-    partitions but uses Zookeeper to manage consumer groups
+    * ZookeeperConsumerConnector: Similar to the current consumer, it has consumer groups and it rebalances partitions but uses Zookeeper to 
+      manage consumer groups
 
 ## Chapter 5: Kafka Internals<a name="Chapter5"></a>
 
@@ -641,10 +633,10 @@ will be ignored.
 In kafka, replicas are stored on brokers, and each broker typically stores hundreds or even thousands of replicas belonging to different topics and
 partitions. Types:
 
-    * Leader replica: Each partition has a single replica designated as the leader. All produce/consume requests go 
-    through the leader, to guarantee consistency
-    * Follower replica: Followers don’t serve client requests, they replicate messages from the leader and stay 
-    up-to-date with the newer messages the leader has
+    * Leader replica: Each partition has a single replica designated as the leader. All produce/consume requests go through the leader, to 
+      guarantee consistency
+    * Follower replica: Followers don’t serve client requests, they replicate messages from the leader and stay up-to-date with the newer messages 
+      the leader has
 
 The leader has to know which of the follower replicas is up-to-date with the leader. To stay in sync with the leader, the replicas send the leader
 Fetch requests, the exact same type of requests that consumers send in order to consume messages (the messages are sent as response to this requests).
@@ -661,8 +653,8 @@ client will be processed in the order in which they were received. All requests 
 
     * Request type (also called API key)
     * Request version (so the brokers can handle clients of different versions and respond accordingly)
-    * Correlation ID: a number that uniquely identifies the request and also appears in the response and in the error
-     logs (the ID is used for troubleshooting)
+    * Correlation ID: a number that uniquely identifies the request and also appears in the response and in the error logs (the ID is used for 
+      troubleshooting)
     * Client ID: used to identify the application that sent the request
 
 For each port the broker listens on, the broker runs an acceptor thread that creates a connection and hands it over to a processor thread (also called
@@ -715,8 +707,7 @@ When kafka allocates partitions, it does so by taking in consideration:
 
     * To spread replicas evenly among brokers
     * To make sure that for each partition, each replica is on a different broker
-    * If the brokers have rack information (from version 0.10.0 and higher), then assign the replicas for each 
-    partition to different racks if possible
+    * If the brokers have rack information (version >=0.10.0), then assign the replicas for each partition to different racks if possible
 
 To decide in which directory new partitions are stored, we count the number of partitions on each directory and add the new partition to the directory
 with the fewest partitions. This means that if you add a new disk, all the new partitions will be created on that disk.
@@ -733,8 +724,7 @@ identical to the format of the messages that we send from the producer to the br
 contains—in addition to its key, value, and offset—things like the message size, checksum code that allows us to detect corruption, magic byte that
 indicates the version of the message format, compression codec (Snappy, GZip, or LZ4), and a timestamp (from v 0.10.0). Kafka brokers ship with the
 DumpLogSegment tool, which allows you to check the offset, checksum, magic byte, size, and compression codec for each message. You can run the tool
-using:
-`bin/kafka-run-class.sh kafka.tools.DumpLogSegments`.
+using `bin/kafka-run-class.sh kafka.tools.DumpLogSegments`.
 
 #### Indexes
 
@@ -746,8 +736,7 @@ In order to help brokers quickly locate the message for a given offset, Kafka ma
 Kafka supports retention policy in a topic to be of type _delete_ which deletes events older than the retention time and _compact_ which stores the
 most recent value for each key in the topic (only for non null keys). Each log is viewed as split into two portions:
 
-    * Clean: This section contains only one value for each key, which is the latest value at the time of the previous
-     compaction
+    * Clean: This section contains only one value for each key, which is the latest value at the time of the previous compaction
     * Dirty: Messages that were written after the last compaction.
 
 If compaction is enabled when Kafka starts (by _log.cleaner.enabled_ configuration), each broker will start a compaction manager thread and _n_
@@ -771,8 +760,8 @@ records. In future versions, the plan is to add a grace period during which we g
 The same way RDBMS comes with ACID (atomicity, consistency, isolation, and durability) reliability guarantees, kafka has its own:
 
     * Kafka provides order guarantee of messages in a partition
-    * Produced messages are considered “committed” when they were written to the partition on all its in-sync 
-    replicas (but not necessarily flushed to disk) 
+    * Produced messages are considered “committed” when they were written to the partition on all its in-sync replicas (but not necessarily 
+      flushed to disk) 
     * Messages that are committed will not be lost as long as at least one replica remains alive
     * Consumers can only read messages that are committed
 
@@ -797,12 +786,10 @@ rack name for each broker.
 Set at broker level through _unclean.leader.election.enable_ (defaults true). When no in-sync replicas exists except for the leader that just became
 unavailable there is two ways to handle this scenario:
 
-    * If we don’t allow the out-of-sync replica to become the new leader, the partition will remain offline until we 
-    bring the old leader back online
-    * If we do allow the out-of-sync replica to become the new leader, we are going to lose all messages that were 
-    written to the old leader while that replica was out of sync and also cause some inconsistencies in consumers. If
-     the old leader is recovered after, it will delete any messages it got that are ahead of the current leader. 
-     Those messages will not be available to any consumer in the future
+    * If we don’t allow the out-of-sync replica to become the new leader, the partition will remain offline until we bring the old leader back online
+    * If we do allow the out-of-sync replica to become the new leader, we are going to lose all messages that were written to the old leader while 
+      that replica was out of sync and also cause some inconsistencies in consumers. If the old leader is recovered after, it will delete any 
+      messages it got that are ahead of the current leader. Those messages will not be available to any consumer in the future
 
 Unclean leader election is disabled in systems where data quality and consistency is critical and is enabled when availability is more important.
 
@@ -830,10 +817,9 @@ often designed to create idempotent messages or include message IDs to deal with
 
 As a developer, you must still be able to handle other types of errors. These include:
 
-    *Nonretriable broker errors such as errors regarding message size, authorization errors, etc.
-    *Errors that occur before the message was sent to the broker—for example, serialization errors
-    *Errors that occur when the producer exhausted all retry attempts or when the available producer's memory is 
-    filled to store messages while retrying
+    * Nonretriable broker errors such as errors regarding message size, authorization errors, etc.
+    * Errors occured before the message was sent to the broker—for example, serialization errors
+    * Errors occured when the producer exhausted all retry attempts or when the available producer's memory is filled to store messages while retrying
 
 ### Using Consumers in a Reliable System
 
@@ -845,42 +831,33 @@ offsets for events they've read but didn't completely process yet.
 
 There are 4 important consumer configurations to take into account:
 
-    *  group.id: Two consumers with the same group id subscribed to the same topic would get assignet a subset of the
-     partitions in the topic, to process all messages in a topic, a consumer must have a unique id
-    * auto.offset.reset: Controls what the consumer will do when no offsets were committed or when the consumer asks 
-    for offsets that don’t exist in the broker. If you choose earliest, the consumer will start from the beginning of
-     the partition whenever it doesn’t have a valid offset. If you choose latest, the consumer will start at the end 
-     of the partition
-    * enable.auto.commit: The automatic offset commit guarantees you will never commit an offset that you didn't 
-    process (might lead to duplicates)
-    * auto.com mit.interval.ms: This configuration lets you configure how frequently they will be committed if 
-    commits are automatic (default 5s)
+    * group.id: Two consumers with the same group id subscribed to the same topic would get assignet a subset of the partitions in the topic, to 
+      process all messages in a topic, a consumer must have a unique id
+    * auto.offset.reset: Controls what the consumer will do when no offsets were committed or when the consumer asks for offsets that don’t exist 
+      in the broker. If you choose earliest, the consumer will start from the beginning of the partition whenever it doesn’t have a valid offset. If 
+      you choose latest, the consumer will start at the end of the partition
+    * enable.auto.commit: The automatic offset commit guarantees you will never commit an offset that you didn't process (might lead to duplicates)
+    * auto.com mit.interval.ms: This configuration lets you configure how frequently they will be committed if commits are automatic (default 5s)
 
 #### Explicitly Committing Offsets in Consumers
 
 Some recommendations in case the consumer is designed to commit its offsets:
 
-    * Always commit offsets after events were processed: You can use the auto-commit configuration or commit events
-     at the end of the poll loop
-    * Commit frequency is a trade-off between performance and number of duplicates in the event of a crash 
-    (committing has some performance overhead)
-    * Make sure you know exactly what o sets you are committing (it is critical to always commit offsets for messages
-     after they were processed)
-    * Rebalances: Remember you need to handle rebalances properly, usually involves committing offsets before 
-    partitions are revoked and cleaning any state you maintain when you are assigned new partitions
-    * Consumers may need to retry: Unlike traditional pub/sub messaging systems, you commit offsets and not ack 
-    individual messages. One option, when you encounter a retriable error, is to commit the last record you processed
-     successfully. Then store the records that still need to be processed in a buffer and keep trying to process the 
-     records, or else, write it to a separate topic and continue
-    * Consumers may need to maintain state: If you need to maintain state, one way to do this is to write the latest 
-    accumulated value to a “results” topic at the same time you are committing the offset
-    * Handling long processing times: For long running calls, even if you don’t want to process additional records, 
-    you must continue polling so the client can send heartbeats to the broker. A common pattern in these cases is to 
-    hand off the data to a thread-pool when possible with multiple threads to speed things up a bit by processing in 
-    parallel while the consumer keeps polling without fetching any data
-    * Exactly-once delivery: A way to achieve this is to write results to a system that has some support for unique 
-    keys (making it idempotent). You can also write to a system that supports transactions, records and offsets would
-     be written in the same transation so they'll be in sync
+    * Always commit offsets after events were processed: You can use the auto-commit configuration or commit events at the end of the poll loop
+    * Commit frequency is a trade-off between performance and number of duplicates in the event of a crash (committing has some performance overhead)
+    * Make sure you know exactly what o sets you are committing (it is critical to always commit offsets for messages after they were processed)
+    * Rebalances: Remember you need to handle rebalances properly, usually involves committing offsets before partitions are revoked and cleaning 
+      any state you maintain when you are assigned new partitions
+    * Consumers may need to retry: Unlike traditional pub/sub messaging systems, you commit offsets and not ack individual messages. One option, 
+      when you encounter a retriable error, is to commit the last record you processed successfully. Then store the records that still need to be 
+      processed in a buffer and keep trying to process the records, or else, write it to a separate topic and continue
+    * Consumers may need to maintain state: If you need to maintain state, one way to do this is to write the latest accumulated value to a 
+      “results” topic at the same time you are committing the offset
+    * Handling long processing times: For long running calls, even if you don’t want to process additional records, you must continue polling so 
+      the client can send heartbeats to the broker. A common pattern in these cases is to hand off the data to a thread-pool when possible with 
+      multiple threads to speed things up a bit by processing in parallel while the consumer keeps polling without fetching any data
+    * Exactly-once delivery: A way to achieve this is to write results to a system that has some support for unique keys (making it idempotent). 
+      You can also write to a system that supports transactions, records and offsets would be written in the same transation so they'll be in sync
 
 ### Validating System Reliability
 
@@ -948,8 +925,7 @@ target system.
 
 In terms of data pipelines, the main security concerns are:
 
-    * Can we make sure the data going through the pipe is encrypted? (for data pipelines that cross datacenter 
-    boundaries)
+    * Can we make sure the data going through the pipe is encrypted? (for data pipelines that cross datacenter boundaries)
     * Who is allowed to make modifications to the pipelines?
     * If the data pipeline needs to read or write from access-controlled locations, can it authenticate properly?
 
@@ -964,14 +940,12 @@ Because Kafka stores all events for long periods of time, it is possible to go b
 
 There are multiple ways accidental coupling can happen:
 
-    * Ad-hoc pipelines: Building a custom pipeline for each pair of applications tightly couples the data pipeline to
-     the specific end points and creates a mess of integration points
-    * Loss of metadata: If the data pipeline doesn’t preserve schema metadata and does not allow for schema 
-    evolution, you end up tightly coupling the software producing the data at the source and the software that uses 
-    it at the destination
-    * Extreme processing: Some processing of data is inherent to data pipelines. The recommendation is to preserve as
-     much of the raw data as possible and allow downstream apps to make their own decisions regarding data processing
-      and aggregation
+    * Ad-hoc pipelines: Building a custom pipeline for each pair of applications tightly couples the data pipeline to the specific end points and 
+      creates a mess of integration points
+    * Loss of metadata: If the data pipeline doesn’t preserve schema metadata and does not allow for schema evolution, you end up tightly coupling 
+      the software producing the data at the source and the software that uses it at the destination
+    * Extreme processing: Some processing of data is inherent to data pipelines. The recommendation is to preserve as much of the raw data as 
+      possible and allow downstream apps to make their own decisions regarding data processing and aggregation
 
 ### When to Use Kafka Connect Versus Producer and Consumer
 
@@ -997,10 +971,9 @@ Configuration properties to configure Connect:
 
     * bootstrap.servers: A list of Kafka brokers that Connect will work with
     * group.id: All workers with the same group ID are part of the same Connect cluster
-    * key.converter and value.converter: The two configurations set the converter for the key and value part of the 
-    message that will be stored in Kafka (defaults to JSON)
-    * key.converter.schema.enable and value.converter.schema.enable: Defines if the converter supports JSON messages 
-    with or without schema
+    * key.converter and value.converter: The two configurations set the converter for the key and value part of the message that will be stored in 
+      Kafka (defaults to JSON)
+    * key.converter.schema.enable and value.converter.schema.enable: Defines if the converter supports JSON messages with or without schema
     * key.converter.schema.registry.url and value.converter.schema.registry.url: Location of the schema registry
     * rest.host.name and rest.port: host and name of the Rest api
 
@@ -1008,13 +981,19 @@ Configuration properties to configure Connect:
 
 To create a connector, we wrote a JSON that includes a connector name, load-kafka- config, and a connector configuration map, which includes the
 connector class, the file we want to load, and the topic we want to load the file into. Example:
-`echo '{"name":"load-kafka-config", "config":{"connector.class":"FileStreamSource","file":"config/server.properties",
-"topic":"kafka-config-topic"}}' | curl -X POST -d @- http://localhost:8083/connectors --header
-"content-Type:application/json"`
+
+```bash
+echo '{"name":"load-kafka-config", "config":{"connector.class":"FileStreamSource","file":"config/server.properties","topic":"kafka-config-topic"}}' |\
+curl -X POST -d @- http://localhost:8083/connectors --header "content-Type:application/json"
+```
+
 We can read back the example file shown before as:
-`echo '{"name":"dump-kafka-config", "config":{"connector.class":"FileStreamSink","file":"copy-of-server-properties",
-"topics":"kafka-config-topic"}}' | curl -X POST -d @- http://localhost:8083/connectors --header
-"content-Type:application/json"`
+
+```bash
+echo '{"name":"dump-kafka-config", "config":{"connector.class":"FileStreamSink","file":"copy-of-server-properties","topics":"kafka-config-topic"}}' |\
+curl -X POST -d @- http://localhost:8083/connectors --header"content-Type:application/json"
+```
+
 Which would store a file called 'copy-of-server-properties' in our local. To delete the connector simply do:
 `curl -X DELETE http://localhost:8083/connectors/dump-kafka-config`
 
@@ -1023,29 +1002,26 @@ Which would store a file called 'copy-of-server-properties' in our local. To del
 To understand how Connect works, you need to understand three basic concepts and how they interact
 
     * Connectors and tasks: Connector plugins implement the connector API, which includes two parts:
-        - Connectors: The connectors determines how many tasks will run for the connector, decides how to split the 
-        data-copying work between the tasks and gets configurations for the tasks from the workers and passing it along
+        - Connectors: The connectors determines how many tasks will run for the connector, decides how to split the data-copying work between the 
+          tasks and gets configurations for the tasks from the workers and passing it along
         - Tasks: Tasks are responsible for actually getting the data in and out of Kafka
-    * Workers: Kafka Connect’s worker processes are the “container” processes that execute the connectors and tasks. 
-    They handle the HTTP requests that define connectors and their configuration, stores the connector configuration,
-     starts the connectors and their tasks, and passes the appropriate configurations along. They are also 
-     responsible for automatically committing offsets for both source and sink connectors and for handling retries 
-     when tasks throw errors
-    * Converters and Connect’s data model: Connect APIs includes a data API, which includes both data objects and a 
-    schema that describes that data. At the moment Avro object, JSON object, or a string formats are supported.
-    * Offset management: The workers does the offset management for the connectors, the connectors use APIs provided 
-    by Kafka to maintain information on which events were already processed. Partitions and offsets are tied to the 
-    source type, these are not kafka specific.
+    * Workers: Kafka Connect’s worker processes are the “container” processes that execute the connectors and tasks. They handle the HTTP requests 
+      that define connectors and their configuration, stores the connector configuration, starts the connectors and their tasks, and passes the 
+      appropriate configurations along. They are also responsible for automatically committing offsets for both source and sink connectors and for 
+      handling retries when tasks throw errors
+    * Converters and Connect’s data model: Connect APIs includes a data API, which includes both data objects and a schema that describes that 
+      data. At the moment Avro object, JSON object, or a string formats are supported.
+    * Offset management: The workers does the offset management for the connectors, the connectors use APIs provided by Kafka to maintain 
+      information on which events were already processed. Partitions and offsets are tied to the source type, these are not kafka specific.
 
 #### Alternatives to Kafka Connect
 
 Other alternatives to connectors might include:
 
     * Ingest Frameworks for Other Datastores: Hadoop and Elasticsearch has their own tools like Flume or Logstash
-    * GUI-Based ETL Tools:  Informatica, Talend, Pentaho, Apache NiFi and StreamSets, support Apache Kafka as both a 
-    data source and a destination
-    * Stream-Processing Frameworks: Almost all stream-processing frameworks include the ability to read events from 
-    Kafka and write them to a few other systems
+    * GUI-Based ETL Tools:  Informatica, Talend, Pentaho, Apache NiFi and StreamSets, support Apache Kafka as both a data source and a destination
+    * Stream-Processing Frameworks: Almost all stream-processing frameworks include the ability to read events from Kafka and write them to a few 
+      other systems
 
 ## Chapter 8: Cross-Cluster Data Mirroring<a name="Chapter8"></a>
 
@@ -1055,12 +1031,10 @@ Mirroring is copying data from one kafka cluster to another, apache Kafka’s bu
 
 Cross-cluster mirroring usages:
 
-    * Regional and central clusters: A company might have one or more datacenters in different geographical regions, 
-    cities, or continents
-    * Redundancy (DR): If you are concerned about the possibility of the entire cluster becoming unavailable for some 
-    reason
-    * Cloud migrations: Applications might run on multiple regions of the cloud provider, for redundancy, or sometimes 
-    multiple cloud providers are used
+    * Regional and central clusters: A company might have one or more datacenters in different geographical regions, cities, or continents
+    * Redundancy (DR): If you are concerned about the possibility of the entire cluster becoming unavailable for some reason
+    * Cloud migrations: Applications might run on multiple regions of the cloud provider, for redundancy, or sometimes multiple cloud providers 
+      are used
 
 ### Multicluster Architectures
 
@@ -1096,33 +1070,31 @@ keeping users mostly in the same datacenter, and handling conflicts when they oc
 Used for disaster recovery scenarios, with two clusters in the same datacenter, one active, the other one a replica of the first one in case the first
 one fails. The setup is simple, a second cluster mirroring the first one. The drawback is that it wastes resources being idle.
 
-    * Data loss and inconsistencies in unplanned failover:Because the Kafka’s various mirroring solutions are all 
-    asynchronous the DR cluster will not have the latest messages from the primary cluster, in case of failover, there
-    will always be some message lost that would depende on the lag  between clusters
-    * Start o set for applications after failover: The most challenging part in failing over to another cluster is 
-    making sure applications know where to start consuming data. Approaches:
-        - Auto offset reset: If you are using old consumers that are committing offsets to Zookeeper and you are not 
-        mirroring these offsets as part of the DR plan, either start reading from the beginning of available data and 
-        handle large amounts of duplicates or skip to the end and miss an unknown number of events (this is the most 
-        popular)
-        - Replicate offsets topic: If the consumer is v > 0.9.0 and you mirror the topic '__consumer_offsets' in DR 
-        consumer would be able to pick up their old offset. But:
+    * Data loss and inconsistencies in unplanned failover:Because the Kafka’s various mirroring solutions are all asynchronous the DR cluster will 
+      not have the latest messages from the primary cluster, in case of failover, there will always be some message lost that would depende on 
+      the lag  between clusters
+    * Start o set for applications after failover: The most challenging part in failing over to another cluster is making sure applications know 
+      where to start consuming data. Approaches:
+        - Auto offset reset: If you are using old consumers that are committing offsets to Zookeeper and you are not mirroring these offsets as 
+          part of the DR plan, either start reading from the beginning of available data and handle large amounts of duplicates or skip to the end 
+          and miss an unknown number of events (this is the most popular)
+        - Replicate offsets topic: If the consumer is v > 0.9.0 and you mirror the topic '__consumer_offsets' in DR consumer would be able to pick 
+          up their old offset. But:
             1. There is no guarantee that offsets in the primary cluster will match those in the secondary cluster
-            2. Even if you started mirroring immediately when the topic was first cre‐ ated and both the primary and 
-            the DR topics start with 0, producer retries can cause offsets to diverge 
-            3. Even if the offsets were perfectly preserved, because of the lag between pri‐ mary and DR clusters and 
-            because Kafka currently lacks transactions, an offset committed by a Kafka consumer may arrive ahead or 
-            behind the record with this offset
-        - Time-based failover: Messages in v 0.10.0 include a timestamp and brokers include an index and an API for 
-        looking up offsets by timestamp, in case of failover Consumer must be told where to start consuming messages
-        - External offset mapping: You can use an external system like Cassandra to store the mappings between the 
-        offsets on the current and failover cluster (this solution is complex and not recommended)  
-    * After the failover: After a failover, if you set the DR cluster to be the primary one and viceversa, you need to
-    consider the problems mentioned before as well as the fact that it is likely that your original primary will have
-    events that the DR cluster does not. The recommended aproach is to delete all the data and committed offsets and
-       then start mirroring from the new primary back to what is now the new DR cluster
-    * A few words on cluster discovery: In the event of failover, your applications will need to know how to start 
-    communicating with the failover cluster, so do not hardcode names, use a DNS instead 
+            2. Even if you started mirroring immediately when the topic was first cre‐ ated and both the primary and the DR topics start with 0, 
+               producer retries can cause offsets to diverge 
+            3. Even if the offsets were perfectly preserved, because of the lag between pri‐ mary and DR clusters and because Kafka currently 
+               lacks transactions, an offset committed by a Kafka consumer may arrive ahead or behind the record with this offset
+        - Time-based failover: Messages in v 0.10.0 include a timestamp and brokers include an index and an API for looking up offsets by 
+          timestamp, in case of failover Consumer must be told where to start consuming messages
+        - External offset mapping: You can use an external system like Cassandra to store the mappings between the offsets on the current and 
+          failover cluster (this solution is complex and not recommended)  
+    * After the failover: After a failover, if you set the DR cluster to be the primary one and viceversa, you need to consider the problems 
+      mentioned before as well as the fact that it is likely that your original primary will have events that the DR cluster does not. The 
+      recommended aproach is to delete all the data and committed offsets and then start mirroring from the new primary back to what is now the 
+      new DR cluster
+    * A few words on cluster discovery: In the event of failover, your applications will need to know how to start communicating with the failover 
+      cluster, so do not hardcode names, use a DNS instead 
 
 #### Stretch Clusters
 
@@ -1138,10 +1110,9 @@ a queue, which is later pushed by the producer to the other cluster every 60 sec
 
 #### How to Configure
 
-    * consumer.config: This is the configuration for all the consumers that will be fetching data from the source 
-    cluster. All consumers use the same file which mandatory configurations are bootstrap.servers and group.id
-    * producer.config: The configuration for the producer used by MirrorMaker to write to the target cluster. Needs 
-    only a bootstra.servers config
+    * consumer.config: This is the configuration for all the consumers that will be fetching data from the source cluster. All consumers use the 
+      same file which mandatory configurations are bootstrap.servers and group.id
+    * producer.config: The configuration for the producer used by MirrorMaker to write to the target cluster. Needs only a bootstra.servers config
     * new.consumer: MirrorMaker can use the 0.8 consumer or the new 0.9 consumer
     * num.streams: Each stream is another consumer reading from the source cluster
     * whitelist: A regular expression for the topic names that will be mirrored (use '.*' for every topic)
@@ -1152,36 +1123,30 @@ In a production environment, you will want to run MirrorMaker as a service, runn
 a log file. A common approach is to use it inside a Docker container. If at all possible, run MirrorMaker at the destination datacenter, remote
 consuming is safer than remote producing. When deploying MirrorMaker in production, it is important to remember to monitor it as follows:
 
-    * Lag monitoring: The lag is the difference in offsets between the latest message in the source Kafka and the 
-    latest message in the destination:
-        - Check the latest offset committed by MirrorMaker to the source Kafka cluster. This indicator is not 100% 
-        accurate because MirrorMaker doesn’t commit offsets all the time
-        - Check the latest offset read by MirrorMaker, the consumers embedded in MirrorMaker publish key metrics in JMX
-         (one of them is the consumer maximum lag)
+    * Lag monitoring: The lag is the difference in offsets between the latest message in the source Kafka and the latest message in the destination:
+        - Check the latest offset committed by MirrorMaker to the source Kafka cluster. This indicator is not 100% accurate because MirrorMaker 
+          doesn’t commit offsets all the time
+        - Check the latest offset read by MirrorMaker, the consumers embedded in MirrorMaker publish key metrics in JMX (one of them is the 
+          consumer maximum lag)
     * Metrics monitoring: MirrorMaker contains a producer and a consumer with metrics like: 
-        - Consumer: fetch-size-avg, fetch-size-max, fetch-rate, fetch-throttle-time-avg, fetch-throttle-time-max, 
-        io-ratio and io-wait-ratio
+        - Consumer: fetch-size-avg, fetch-size-max, fetch-rate, fetch-throttle-time-avg, fetch-throttle-time-max, io-ratio and io-wait-ratio
         - Producer: batch-size-avg, batch-size-max, requests-in-flight, record-retry-rate, io-ratio and io-wait-ratio
-    * Canary: Provides a process that, every minute, sends an event to a special topic in the source cluster and tries 
-    to read the event from the destination cluster 
+    * Canary: Provides a process that, every minute, sends an event to a special topic in the source cluster and tries to read the event from the 
+      destination cluster 
 
 #### Tuning MirrorMaker
 
 Tunning options for the producer:
 
     * max.in.flight.requests.per.connection: Defaults to one, which can limit throughput
-    * linger.ms and batch.size: You can increase throughput by introducing a bit of latency, you can also increase 
-    batch.size and send larger batches
+    * linger.ms and batch.size: You can increase throughput by introducing a bit of latency, you can also increase batch.size and send larger batches
 
 Tunning options for the consumer:
 
-    * The Partition assignment strategy in MirrorMaker is Range: for large number of topics and partitions change it to
-     Round robin
-    * fetch.max.bytes: If you have available memory, try increasing fetch.max.bytes to allow the consumer to read more 
-    data in each request
-    * fetch.min.bytes and fetch.max.wait: If fetch-rate is high, increase both fetch.min.bytes and fetch.max.wait so 
-    the consumer will receive more data in each request and the broker will wait until enough data is available before 
-    responding to the consumer request
+    * The Partition assignment strategy in MirrorMaker is Range: for large number of topics and partitions change it to Round robin
+    * fetch.max.bytes: If you have available memory, try increasing fetch.max.bytes to allow the consumer to read more data in each request
+    * fetch.min.bytes and fetch.max.wait: If fetch-rate is high, increase both fetch.min.bytes and fetch.max.wait so the consumer will receive 
+      more data in each request and the broker will wait until enough data is available before responding to the consumer request
 
 ### Other Cross-Cluster Mirroring Solutions
 
@@ -1197,8 +1162,7 @@ instance.
 This solution is designed to solve problems with Diverging cluster configurations (topics can end up with different numbers of partitions, replication
 factors, and topic-level settings) and Cluster management challenges due to MirrorMaker being typically deployed as a cluster of multiple instances (
 another cluster to figure out how to deploy, monitor, and manage). Running Replicator inside Connect, we can cut down on the number of kafka (and
-zookeper)
-clusters we need to manage.
+zookeper) clusters we need to manage.
 
 ## Chapter 9: Administering Kafka<a name="Chapter9"></a>
 
@@ -1211,8 +1175,7 @@ the cluster.
 
 #### Creating a New Topic
 
-`kafka-topics.sh --zookeeper <zookeeper connect> --create --topic <string> --replication-factor <integer>
---partitions <integer>`
+`kafka-topics.sh --zookeeper <zookeeper connect> --create --topic <string> --replication-factor <integer> --partitions <integer>`
 
 #### Adding Partitions
 
@@ -1303,8 +1266,7 @@ into multiple steps. In that case you can pass the file to the command:
 If a topic’s partitions are not balanced across the cluster, or is taken offline and the partition is under-replicated or a new broker is added and
 needs to receive a share of the cluster load, you might want to change the replica assignments for a partition. To generate a set of partition moves,
 you must create a file that contains a JSON object listing the topics:
-`kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --generate --topics-to-move-json-file <string>
---broker-list <comma separated broker id list>`
+`kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --generate --topics-to-move-json-file <string> --broker-list <broker1,broker2...>`
 The tool will output, on standard output, two JSON objects describing the current partition assignment for the topics and the proposed partition
 assignment. To execute a proposed partition reassignment from the file generated:
 `kafka-reassign-partitions.sh --zookeeper <zookeeper connect> --execute --reassignment-json-file <string>`
@@ -1378,10 +1340,8 @@ which is named with the topic name. Deleting these Zookeeper nodes (but not the 
 This requires a full shutdown of all brokers in the cluster, however, and cannot be done while any of the brokers in the cluster are running:
 
     1. Shut down all brokers in the cluster
-    2. Remove the Zookeeper path /brokers/topics/TOPICNAME from the Kafka cluster path. Note that this node has child 
-    nodes that must be deleted first
-    3. Remove the partition directories from the log directories on each broker. These will be named TOPICNAME-NUM, 
-    where NUM is the partition ID
+    2. Remove the Zookeeper path /brokers/topics/TOPICNAME from the Kafka cluster path. Note that this node has child nodes that must be deleted first
+    3. Remove the partition directories from the log directories on each broker. These will be named TOPICNAME-NUM, where NUM is the partition ID
     4. Restart all brokers
 
 ## Chapter 10: Monitoring Kafka<a name="Chapter10"></a>
@@ -1480,11 +1440,11 @@ message-count mismatches (with unclean leader election disabled).
 
 ##### Request metrics
 
-The following requests have met‐ rics provided:, ApiVersions, ControlledShutdown, CreateTopics, DeleteTopics, DescribeGroups, Fetch, FetchConsumer,
+The following requests have metrics provided: ApiVersions, ControlledShutdown, CreateTopics, DeleteTopics, DescribeGroups, Fetch, FetchConsumer,
 FetchFollower, GroupCoordinator, Heartbeat, JoinGroup, LeaderAndIsr, LeaveGroup, ListGroups, Metadata, OffsetCommit, OffsetFetch, Offsets, Produce,
 SaslHandshake, StopReplica, SyncGroup and UpdateMetadata. For each of these requests, there are eight metrics provided:
 
-    * Total time: Measures the total amount of time the broker spends processing the request, from receiving it to sending the response back to the requestor
+    * Total time: Measures the total time the broker spends processing the request, from receiving it to sending the response back to the requestor
     * Request queue time: The amount of time the request spends in queue after it has been received but before processing starts
     * Local time: The amount of time the partition leader spends processing a request, including sending it to disk (but not necessarily flushing it)
     * Remote time: The amount of time spent waiting for the followers before request processing can complete
@@ -1562,7 +1522,8 @@ This bean provides attributes describing everything from the sizes of the messag
     * batch-size-avg: Provides the average size of a single message batch
     * record-size-avg: Shows the average size of a single record in bytes
     * records-per-request-avg: Describes the average number of messages that are in a single produce request
-    * record-queue-time-avg: Average amount of time (ms) that a single message waits in the producer, after the application sends it, before it is actually produced to Kafka  
+    * record-queue-time-avg: Average amount of time (ms) that a single message waits in the producer, after the application sends it, before it is 
+      actually produced to Kafka  
 
 ##### Per-broker and per-topic metrics
 
@@ -1642,8 +1603,11 @@ Stream processing becomes interesting when you have operations that involve mult
 itself, you need to keep track of more information. We call the information that is stored between events a state. Stream processing refers to several
 types of state:
 
-    * Local or internal state: State that is accessible only by a specific instance of the stream-processing application. This state is usually maintained and managed with an embedded, in-memory database running within the application. As a result, many of the design patterns in stream processing focus on ways to partition the data into substreams that can be processed using a limited amount of local state
-    * External state: State that is maintained in an external datastore, often a NoSQL system like Cassandra. Adds extra latency but is unlimited and can be accessed from multiple instances of the application or even from different applications
+    * Local or internal state: State that is accessible only by a specific instance of the stream-processing application. This state is usually 
+      maintained and managed with an embedded, in-memory database running within the application. As a result, many of the design patterns in 
+      stream processing focus on ways to partition the data into substreams that can be processed using a limited amount of local state
+    * External state: State that is maintained in an external datastore, often a NoSQL system like Cassandra. Adds extra latency but is unlimited and 
+      can be accessed from multiple instances of the application or even from different applications
 
 #### Stream-Table Duality
 
@@ -1670,7 +1634,9 @@ Aggregations require maintaining a state for the stream. This can be achieved wi
 the entiew data (for example 'group by' type aggregates). Several issues must be taken into account:
 
     * Memory usage: The local state must fit into the available memory on the application instance
-    * Persistence: State must be kept if the application instance is shut down and be recoverable. Kafka Streams state is stored in-memory using embedded RocksDB, which also persists the data to disk for quick recovery after restarts, with all the changes to the local state are also sent to a Kafka topic
+    * Persistence: State must be kept if the application instance is shut down and be recoverable. Kafka Streams state is stored in-memory using 
+      embedded RocksDB, which also persists the data to disk for quick recovery after restarts, with all the changes to the local state are also 
+      sent to a Kafka topic
     * Rebalancing: Applications should handle repartitions
 
 #### Multiphase Processing/Repartitioning
@@ -1877,10 +1843,16 @@ Different types of applications call for different stream-processing solutions. 
 asynchronous microservices (which may need to maintain a local state caching events as a way to improve performance) or near real-time data analytics
 with complex aggregations and joins requires different approaches:
 
-    * For ingest problems: Decide if you need streaming or ingest systems (connectors). For stream processing systems, make sure it has both a good selection of connectors and high-quality connectors for the systems you are targeting
-    * For low milliseconds actions: Request-response patterns usually works better. If you want a stream-processing system, choose one that supports an event-by-event low-latency model rather than one that focuses on microbatches
-    * For asynchronous microservices: A stream processing system that integrates well with your message bus of choice, has change capture capabilities that easily deliver upstream changes to the micro‐service local caches, and has the good support of a local store that can serve as a cache or materialized view of the microservice data
-    * For complex analytics engine: A stream-processing system with great support for a local store to support advanced aggregations, windows, and joins that are otherwise difficult to implement. The APIs should include support for custom aggregations, window operations, and multiple join types.
+    * For ingest problems: Decide if you need streaming or ingest systems (connectors). For stream processing systems, make sure it has both a good 
+      selection of connectors and high-quality connectors for the systems you are targeting
+    * For low milliseconds actions: Request-response patterns usually works better. If you want a stream-processing system, choose one that supports 
+      an event-by-event low-latency model rather than one that focuses on microbatches
+    * For asynchronous microservices: A stream processing system that integrates well with your message bus of choice, has change capture capabilities
+      that easily deliver upstream changes to the micro‐service local caches, and has the good support of a local store that can serve as a cache 
+      or materialized view of the microservice data
+    * For complex analytics engine: A stream-processing system with great support for a local store to support advanced aggregations, windows, and 
+      joins that are otherwise difficult to implement. The APIs should include support for custom aggregations, window operations, and multiple 
+      join types.
 
 Other global considerations:
 
